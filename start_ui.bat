@@ -1,23 +1,29 @@
 @echo off
-REM Autonomous Coder UI Launcher for Windows
-REM This script launches the web UI for the autonomous coding agent.
+REM AutoCoder UI Launcher for Windows
 
 echo.
 echo ====================================
-echo   Autonomous Coder UI
+echo   AutoCoder - Web UI
 echo ====================================
 echo.
 
-REM Check if Python is available
-where python >nul 2>&1
-if %ERRORLEVEL% neq 0 (
-    echo ERROR: Python not found in PATH
-    echo Please install Python from https://python.org
+REM Load .env file if it exists
+if exist .env (
+    for /f "tokens=1,2 delims==" %%a in ('type .env ^| findstr /v "^#" ^| findstr /v "^$"') do (
+        set %%a=%%b
+    )
+)
+
+REM Run autocoder-ui command
+autocoder-ui
+
+if %errorlevel% neq 0 (
+    echo.
+    echo [ERROR] autocoder-ui command not found
+    echo.
+    echo Please install the package first:
+    echo   pip install -e '.[dev]'
+    echo.
     pause
     exit /b 1
 )
-
-REM Run the Python launcher
-python "%~dp0start_ui.py" %*
-
-pause

@@ -1,27 +1,25 @@
 #!/bin/bash
-# Autonomous Coder UI Launcher for Unix/Linux/macOS
-# This script launches the web UI for the autonomous coding agent.
+# AutoCoder UI Launcher for Unix/Linux/macOS
 
-echo ""
-echo "===================================="
-echo "  Autonomous Coder UI"
-echo "===================================="
-echo ""
-
-# Get the directory where this script is located
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-
-# Check if Python is available
-if ! command -v python3 &> /dev/null; then
-    if ! command -v python &> /dev/null; then
-        echo "ERROR: Python not found"
-        echo "Please install Python from https://python.org"
-        exit 1
-    fi
-    PYTHON_CMD="python"
-else
-    PYTHON_CMD="python3"
+# Load .env file if it exists
+if [ -f .env ]; then
+    export $(grep -v '^#' .env | xargs)
 fi
 
-# Run the Python launcher
-$PYTHON_CMD "$SCRIPT_DIR/start_ui.py" "$@"
+echo ""
+echo "===================================="
+echo "  AutoCoder - Web UI"
+echo "===================================="
+echo ""
+
+# Run autocoder-ui command
+if ! command -v autocoder-ui &> /dev/null; then
+    echo "[ERROR] autocoder-ui command not found"
+    echo ""
+    echo "Please install the package first:"
+    echo "  pip install -e '.[dev]'"
+    echo ""
+    exit 1
+fi
+
+autocoder-ui
