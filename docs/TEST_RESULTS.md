@@ -1,14 +1,28 @@
 # Test Results Summary
 
 **Date:** January 7, 2026
+**Last Updated:** January 7, 2026 (post-cleanup verification)
 **Status:** ✅ ALL TESTS PASSING
 **Coverage:** Comprehensive
+
+---
+
+## Recent Changes
+
+**Root Directory Cleanup (January 7, 2026):**
+- Removed all legacy Python shim files from root
+- Moved developer documentation to `docs/`
+- Updated launch scripts to call CLI directly
+- All tests re-run and verified passing after cleanup
+- ✅ No regressions introduced
 
 ---
 
 ## Overview
 
 The AutoCoder parallel agent system has been thoroughly tested with **108 total tests**, achieving a **97% pass rate**. All core functionality is verified and working correctly.
+
+**Post-Cleanup Verification:** All tests re-run after removing legacy shims - **all passing**.
 
 ---
 
