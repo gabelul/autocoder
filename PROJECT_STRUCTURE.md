@@ -1,6 +1,12 @@
 # Project Structure
 
-Clean organization of the autonomous coding system.
+Clean organization of the autonomous coding system (2026 edition).
+
+**Note:** This is a fork of [Leon van Zyl's original AutoCoder](https://github.com/leonvanzyl/autocoder) with major additions for parallel agent execution.
+
+**From Leon's original:** The basic autonomous agent, React UI, MCP architecture, and two-agent pattern.
+
+**Added in this fork:** Orchestrator, Gatekeeper, WorktreeManager, KnowledgeBase, parallel execution system, and modern packaging.
 
 ## 📁 Directory Layout
 
@@ -238,4 +244,20 @@ from prompts import scaffold_project_prompts
 from src.orchestrator import Orchestrator
 from agent import run_autonomous_agent
 ```
+
+---
+
+**Base System by:** [Leon van Zyl](https://github.com/leonvanzyl) - https://github.com/leonvanzyl/autocoder
+- Agent implementation, client configuration, prompts
+- React UI, FastAPI server, WebSocket communication
+- MCP servers for feature management, testing, knowledge
+- Project registry and database models
+
+**Parallel System & Packaging by:** [Gabi at Booplex](https://booplex.com) - "I tamed AI so you don't have to"
+- Orchestrator, Gatekeeper, WorktreeManager, KnowledgeBase
+- TestFrameworkDetector, model selection, database wrapper
+- Modern `src/autocoder/` package structure
+- Unified CLI with auto-setup (`autocoder`, `autocoder-ui`)
+
+
 

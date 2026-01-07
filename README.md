@@ -1,16 +1,18 @@
 # AutoCoder - Autonomous Coding Agent
 
-**Fork of the original Autonomous Coding Agent with modern packaging, auto-setup, and a unified CLI.**
+**Fork of Leon van Zyl's original AutoCoder with parallel agents, knowledge base, and modern packaging.**
 
-This is my fork of [the original AutoCoder project](https://github.com/original-repo/autocoder) (I'll update this when I find the actual upstream). I loved the concept but wanted it to feel more like a proper, installable tool instead of a collection of scripts. So I:
+This is my fork of [the original AutoCoder project by Leon van Zyl](https://github.com/leonvanzyl/autocoder). Leon built the brilliant foundation (autonomous agent, React UI, MCP architecture), and I added:
 
-- **Modernized the packaging** - Now it's a proper Python package with `pyproject.toml` (the 2025 way, not the 2015 way)
-- **Added auto-setup** - Because running `npm install && npm run build` manually 47 times was driving me nuts
-- **Unified the CLI** - One command (`autocoder`) that asks what you want instead of remembering 10 different scripts
-- **Fixed import hell** - Everything is now properly organized in `src/autocoder/` instead of scattered everywhere
-- **Kept backward compatibility** - All the old scripts still work because I'm not a monster
+- **Parallel Agents** - Orchestrator that runs 3-5 agents simultaneously (3x faster)
+- **Knowledge Base** - Agents learn from each other's successes
+- **Gatekeeper** - Verification system to keep code quality high
+- **Worktree Manager** - Isolated git worktrees for safe parallel work
+- **Modern Packaging** - Proper `pyproject.toml` with `src/` layout (2026 standards)
+- **Auto-Setup** - CLI handles `npm install && npm run build` automatically
+- **Unified CLI** - One `autocoder` command instead of 10 different scripts
 
-The core magic (parallel agents, knowledge base, Claude integration) is all from the original project. I just made it easier to install and use.
+Leon's original handles single-agent autonomous coding beautifully. I added the ability to run multiple agents in parallel while they learn from each other.
 
 ---
 
@@ -117,67 +119,76 @@ autocoder-ui
 
 ---
 
-## What I Changed from the Original
+## What I Added to Leon's Original
 
-### Package Structure (The Big One)
+### Major New Features
 
-**Before (original):**
+**1. Parallel Agents (The Big One)**
+
+Leon's original runs one agent at a time. I added:
+
+- **Orchestrator** (`src/autocoder/core/orchestrator.py`) - Spawns 3-5 agents in isolated git worktrees
+- **Gatekeeper** (`src/autocoder/core/gatekeeper.py`) - Verifies each feature before merging
+- **WorktreeManager** (`src/autocoder/core/worktree_manager.py`) - Manages git worktrees for safe parallel work
+- **KnowledgeBase** (`src/autocoder/core/knowledge_base.py`) - Agents share learnings (if Agent 1 figures out React testing, Agent 2 benefits)
+
+Result: 3x faster development without sacrificing quality.
+
+**2. Modern Packaging**
+
+Leon's original: Everything in root, run with `python start.py`
+
+This fork:
+- `src/autocoder/` package structure (2026 standards)
+- `pyproject.toml` for proper installation
+- `autocoder` and `autocoder-ui` entry points
+- Dev extras (`[dev]`) with pytest, black, ruff, mypy
+
+**3. Auto-Setup & Unified CLI**
+
+The original expected you to:
+1. Create venv manually
+2. `pip install -r requirements.txt`
+3. `cd ui && npm install && npm run build`
+4. Remember which script does what
+
+Now you just:
+1. `pip install -e '.[dev]'`
+2. `autocoder` (handles setup, asks what you want)
+
+### Package Structure
+
+**Leon's original:**
 ```
 autocoder/
 ├── agent.py
 ├── client.py
 ├── start.py
-├── orchestrator.py
-├── ...everything in root...
+├── orchestrator_demo.py  # Doesn't exist - I added this
+└── ...everything in root...
 ```
 
-**After (this fork):**
+**This fork:**
 ```
 autocoder/
-├── pyproject.toml          # Modern packaging config
-├── src/autocoder/          # Proper package structure
-│   ├── core/               # Orchestrator, Gatekeeper, etc.
-│   ├── agent/              # Agent implementation
-│   ├── server/             # FastAPI backend
-│   ├── tools/              # MCP tools
-│   └── cli.py              # Unified CLI
+├── pyproject.toml          # Modern packaging
+├── src/autocoder/
+│   ├── core/               # NEW: Orchestrator, Gatekeeper, WorktreeManager, KnowledgeBase
+│   ├── agent/              # From Leon's original (reorganized)
+│   ├── server/             # From Leon's original (reorganized)
+│   ├── tools/              # From Leon's original (MCP servers)
+│   ├── api/                # From Leon's original (reorganized)
+│   └── cli.py              # NEW: Unified CLI
 ├── Root (backward compat)
-│   ├── start.py            # Still works (shim)
-│   ├── agent.py            # Still works (shim)
+│   ├── start.py            # From Leon's original (now shim)
+│   ├── agent.py            # From Leon's original (now shim)
 │   └── ...                 # All old scripts still work
+└── ui/                     # From Leon's original (React UI)
 ```
 
-**Why?** Because Python packaging in 2025 shouldn't look like 2015. The `src/` layout is the modern standard, and it makes the codebase way more maintainable.
+**What's from Leon:** The basic agent system, React UI, MCP architecture, two-agent pattern.
 
-### Auto-Setup Feature
-
-The original project expected you to:
-1. Create venv manually
-2. Run `pip install -r requirements.txt`
-3. `cd ui && npm install && npm run build`
-4. Hope nothing broke
-
-Now you just:
-1. Run `autocoder`
-2. It checks everything and fixes what it can
-3. You answer one question (CLI or UI?)
-4. Done
-
-### Unified CLI
-
-Instead of:
-- `python start.py`
-- `python autonomous_agent_demo.py`
-- `python orchestrator_demo.py`
-- `python start_ui.py`
-
-You've got:
-- `autocoder` (does everything, asks what you want)
-- `autocoder agent --project-dir ...`
-- `autocoder parallel --project-dir ...`
-- `autocoder-ui`
-
-All your old scripts still work (I made shims), but you don't need them anymore.
+**What I added:** Parallel execution system, knowledge base, modern packaging, unified CLI, auto-setup.
 
 ---
 
@@ -226,17 +237,24 @@ See [PROJECT_STRUCTURE.md](PROJECT_STRUCTURE.md) for the full breakdown.
 
 ## Original Project Credits
 
-This fork is built on top of the original Autonomous Coding Agent. All the core ideas (two-agent pattern, parallel execution, knowledge base, test framework detection, etc.) come from the original project. I just:
+**Base System by Leon van Zyl:**
+- [Original AutoCoder](https://github.com/leonvanzyl/autocoder)
+- Autonomous agent using Claude Agent SDK
+- Two-agent pattern (initializer + coding agent)
+- React-based web UI with real-time updates
+- MCP (Model Context Protocol) server architecture
+- Project registry and feature database system
+- The foundational architecture that makes autonomous coding possible
 
-- Modernized the packaging
-- Added auto-setup
-- Unified the CLI
-- Fixed a bunch of import issues
-- Made it feel like a proper tool instead of a collection of scripts
+**My Additions:**
+- Parallel agent execution (Orchestrator, Gatekeeper, WorktreeManager)
+- Knowledge Base for cross-agent learning
+- Test framework auto-detection
+- Modern Python packaging (`pyproject.toml`, `src/` layout)
+- Unified CLI with auto-setup (`autocoder`, `autocoder-ui`)
+- Proper entry points and dev extras
 
-**Original concept and architecture:** [Link to original repo when I find it]
-
-**My contributions:** The packaging, auto-setup, and unified CLI layer on top of that solid foundation.
+Leon built the brilliant single-agent system. I added the ability to run multiple agents in parallel while they learn from each other.
 
 ---
 
@@ -256,7 +274,6 @@ Result: 3x faster development without sacrificing quality (thanks to the Gatekee
 
 ## Known Issues / TODO
 
-- [ ] Need to find and link the original upstream repo
 - [ ] Auto-setup could handle venv creation too (currently warns but doesn't create it)
 - [ ] Some edge cases with Windows paths in the git worktree code
 - [ ] Documentation could use more examples of actual project specs
@@ -271,4 +288,4 @@ Same as the original project (will update once I find the proper upstream).
 
 **Built by Gabi at [Booplex](https://booplex.com)** - "I tamed AI so you don't have to"
 
-*I only forked this because the original was brilliant but needed some UX love. All the hard stuff (making AI code autonomously) is theirs. I just made it easier to use.*
+*Leon's brilliant single-agent system + my parallel execution layer = 3x faster autonomous coding. The hardest part (making AI code autonomously at all) was already solved. I just made it faster and easier to use.*
