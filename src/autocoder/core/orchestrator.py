@@ -23,8 +23,10 @@ import os
 import sys
 import logging
 import subprocess
+import psutil
+import threading
 from pathlib import Path
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Tuple, Set
 from datetime import datetime, timedelta
 
 # Direct imports (system code = fast!)
@@ -34,10 +36,159 @@ from .worktree_manager import WorktreeManager
 from .database import Database, get_database
 from .gatekeeper import Gatekeeper
 
+# Agent imports (for initializer)
+from autocoder.agent import run_autonomous_agent
+
 # MCP server imports (for agents)
 from autocoder.tools import test_mcp, knowledge_mcp, model_settings_mcp, feature_mcp
 
 logger = logging.getLogger(__name__)
+
+# ============================================================================
+# Port Allocator - Thread-safe port pool management
+# ============================================================================
+
+class PortAllocator:
+    """
+    Thread-safe port pool allocator for parallel agents.
+
+    Manages two port pools:
+    - Backend API ports: 5000-5100 (100 ports)
+    - Frontend web ports: 5173-5273 (100 ports)
+
+    Each agent gets a unique pair of ports (api_port, web_port) to avoid
+    conflicts when running multiple agents in parallel.
+    """
+
+    # Port ranges
+    API_PORT_RANGE = (5000, 5100)  # 100 ports for backend APIs
+    WEB_PORT_RANGE = (5173, 5273)  # 100 ports for frontend dev servers
+
+    def __init__(self):
+        """Initialize the port allocator with empty pools."""
+        self._lock = threading.Lock()
+
+        # Track available and in-use ports
+        self._available_api_ports: Set[int] = set(
+            range(self.API_PORT_RANGE[0], self.API_PORT_RANGE[1])
+        )
+        self._available_web_ports: Set[int] = set(
+            range(self.WEB_PORT_RANGE[0], self.WEB_PORT_RANGE[1])
+        )
+
+        self._in_use_api_ports: Set[int] = set()
+        self._in_use_web_ports: Set[int] = set()
+
+        # Track which agent owns which ports
+        self._agent_ports: Dict[str, Tuple[int, int]] = {}
+
+        logger.info(f"PortAllocator initialized:")
+        logger.info(f"  API ports: {self.API_PORT_RANGE[0]}-{self.API_PORT_RANGE[1]} ({len(self._available_api_ports)} available)")
+        logger.info(f"  Web ports: {self.WEB_PORT_RANGE[0]}-{self.WEB_PORT_RANGE[1]} ({len(self._available_web_ports)} available)")
+
+    def allocate_ports(self, agent_id: str) -> Optional[Tuple[int, int]]:
+        """
+        Allocate a port pair for an agent.
+
+        Args:
+            agent_id: Unique agent identifier
+
+        Returns:
+            Tuple of (api_port, web_port) or None if no ports available
+        """
+        with self._lock:
+            # Check if agent already has ports allocated
+            if agent_id in self._agent_ports:
+                logger.warning(f"Agent {agent_id} already has ports allocated: {self._agent_ports[agent_id]}")
+                return self._agent_ports[agent_id]
+
+            # Check if we have available ports
+            if not self._available_api_ports or not self._available_web_ports:
+                logger.error(f"No ports available! API: {len(self._available_api_ports)}, Web: {len(self._available_web_ports)}")
+                return None
+
+            # Allocate next available port from each pool
+            api_port = min(self._available_api_ports)
+            web_port = min(self._available_web_ports)
+
+            # Move to in-use sets
+            self._available_api_ports.remove(api_port)
+            self._available_web_ports.remove(web_port)
+            self._in_use_api_ports.add(api_port)
+            self._in_use_web_ports.add(web_port)
+
+            # Track allocation
+            self._agent_ports[agent_id] = (api_port, web_port)
+
+            logger.info(f"Allocated ports for {agent_id}: API={api_port}, WEB={web_port}")
+            logger.info(f"  Available ports: API={len(self._available_api_ports)}, Web={len(self._available_web_ports)}")
+
+            return (api_port, web_port)
+
+    def release_ports(self, agent_id: str) -> bool:
+        """
+        Release ports allocated to an agent.
+
+        Args:
+            agent_id: Agent identifier
+
+        Returns:
+            True if ports were released, False if agent had no ports allocated
+        """
+        with self._lock:
+            if agent_id not in self._agent_ports:
+                logger.warning(f"Agent {agent_id} has no ports allocated")
+                return False
+
+            api_port, web_port = self._agent_ports[agent_id]
+
+            # Remove from in-use and add back to available
+            self._in_use_api_ports.discard(api_port)
+            self._in_use_web_ports.discard(web_port)
+            self._available_api_ports.add(api_port)
+            self._available_web_ports.add(web_port)
+
+            # Remove from tracking
+            del self._agent_ports[agent_id]
+
+            logger.info(f"Released ports for {agent_id}: API={api_port}, WEB={web_port}")
+            logger.info(f"  Available ports: API={len(self._available_api_ports)}, Web={len(self._available_web_ports)}")
+
+            return True
+
+    def get_agent_ports(self, agent_id: str) -> Optional[Tuple[int, int]]:
+        """
+        Get the ports allocated to an agent.
+
+        Args:
+            agent_id: Agent identifier
+
+        Returns:
+            Tuple of (api_port, web_port) or None if not allocated
+        """
+        with self._lock:
+            return self._agent_ports.get(agent_id)
+
+    def get_status(self) -> Dict[str, Any]:
+        """Get current allocator status."""
+        with self._lock:
+            return {
+                "api_ports": {
+                    "available": len(self._available_api_ports),
+                    "in_use": len(self._in_use_api_ports),
+                    "total": self.API_PORT_RANGE[1] - self.API_PORT_RANGE[0],
+                    "range": f"{self.API_PORT_RANGE[0]}-{self.API_PORT_RANGE[1]}"
+                },
+                "web_ports": {
+                    "available": len(self._available_web_ports),
+                    "in_use": len(self._in_use_web_ports),
+                    "total": self.WEB_PORT_RANGE[1] - self.WEB_PORT_RANGE[0],
+                    "range": f"{self.WEB_PORT_RANGE[0]}-{self.WEB_PORT_RANGE[1]}"
+                },
+                "active_allocations": len(self._agent_ports),
+                "agents": list(self._agent_ports.keys())
+            }
+
 
 
 class Orchestrator:
@@ -45,6 +196,7 @@ class Orchestrator:
     Orchestrator manages parallel autonomous coding agents.
 
     Uses direct imports for system logic and provides MCP tools to agents.
+    Includes port pool allocator for managing parallel agent server ports.
     """
 
     def __init__(
@@ -71,15 +223,66 @@ class Orchestrator:
         self.database = get_database(str(self.project_dir))
         self.gatekeeper = Gatekeeper(str(self.project_dir))
 
+        # Initialize port allocator
+        self.port_allocator = PortAllocator()
+        port_status = self.port_allocator.get_status()
+
         # Load model preset
         self.model_preset = ModelPreset(model_preset)
-        self.available_models = self.model_settings.get_available_models(self.model_preset)
+        self.model_settings.preset = model_preset
+        self.available_models = self.model_settings.available_models
 
         logger.info(f"Orchestrator initialized:")
         logger.info(f"  Project: {self.project_dir}")
         logger.info(f"  Max agents: {max_agents}")
         logger.info(f"  Model preset: {model_preset}")
         logger.info(f"  Available models: {self.available_models}")
+        logger.info(f"  Port pools:")
+        logger.info(f"    API: {port_status['api_ports']['range']} ({port_status['api_ports']['available']} available)")
+        logger.info(f"    Web: {port_status['web_ports']['range']} ({port_status['web_ports']['available']} available)")
+
+    async def _run_initializer(self) -> bool:
+        """
+        Run the initializer agent to create features if the database is empty.
+
+        The initializer scans the codebase, creates a feature list, and prepares
+        the project for parallel execution. Runs on the main branch (no worktree).
+
+        Returns:
+            True if initializer succeeded, False otherwise
+        """
+        logger.info("📝 No features found, running initializer agent...")
+
+        try:
+            # Select model for initializer (use best available model)
+            model = self.available_models[0] if self.available_models else "opus"
+
+            logger.info(f"   Model: {model.upper()}")
+            logger.info(f"   Location: Main branch (no worktree needed)")
+
+            # Run initializer with max_iterations=1 (only initializer session)
+            await run_autonomous_agent(
+                project_dir=self.project_dir,
+                model=model,
+                max_iterations=1,  # Only run initializer
+                yolo_mode=False     # Full testing for initializer
+            )
+
+            # Verify features were created
+            stats = self.database.get_stats()
+            total_features = stats["features"]["total"]
+
+            if total_features == 0:
+                logger.error("   ❌ Initializer completed but no features were created!")
+                return False
+
+            logger.info(f"   ✅ Initializer completed successfully!")
+            logger.info(f"   📊 Created {total_features} features")
+            return True
+
+        except Exception as e:
+            logger.error(f"   ❌ Initializer failed: {e}")
+            return False
 
     async def run_parallel_agents(self) -> Dict[str, Any]:
         """
@@ -97,9 +300,32 @@ class Orchestrator:
         total_failed = 0
 
         try:
+            # Check if we need to run initializer first
+            stats = self.database.get_stats()
+            total_features = stats["features"]["total"]
+
+            if total_features == 0:
+                logger.info("📝 No features found, running initializer agent...")
+                initializer_success = await self._run_initializer()
+                if not initializer_success:
+                    logger.error("❌ Initializer failed, cannot continue with parallel execution")
+                    return {
+                        "duration_seconds": 0,
+                        "features_completed": 0,
+                        "features_failed": 0,
+                        "error": "Initializer failed"
+                    }
+                # Refresh stats after initializer
+                stats = self.database.get_stats()
+
             while True:
                 # Check if there are pending features
                 stats = self.database.get_stats()
+
+                total_features = stats["features"]["total"]
+                if total_features == 0:
+                    logger.error("❌ No features in database!")
+                    break
 
                 if stats["features"]["pending"] == 0 and stats["features"]["in_progress"] == 0:
                     logger.info("✅ All features complete!")
@@ -153,53 +379,120 @@ class Orchestrator:
 
         spawned_agents = []
 
-        # Claim features atomically
-        agent_id = f"agent-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
-        branch_names = []
+        # Each spawned agent gets its own unique agent_id.
+        agent_id_prefix = f"agent-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
 
-        # Claim batch of features
-        feature_ids = self.database.claim_batch(
-            count=count,
-            agent_id=agent_id,
-            branch_names=branch_names
-        )
+        for i in range(count):
+            agent_id = f"{agent_id_prefix}-{i}"
 
-        if not feature_ids:
-            logger.info("No pending features to claim")
-            return []
+            # Find and claim a pending feature (retry a few times in case of races)
+            claimed_feature = None
+            claimed_branch = None
+            for _ in range(5):
+                feature = self.database.get_next_pending_feature()
+                if not feature:
+                    break
 
-        for i, feature_id in enumerate(feature_ids):
-            # Get feature details
-            feature = self.database.get_feature(feature_id)
+                feature_id = feature["id"]
+                branch_name = f"feat/feature-{feature_id}-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+                if self.database.claim_feature(feature_id, agent_id, branch_name):
+                    claimed_feature = feature
+                    claimed_branch = branch_name
+                    break
+
+            if not claimed_feature:
+                logger.info("No pending features to claim")
+                break
+
+            feature_id = claimed_feature["id"]
 
             # Select model for this feature
-            model = self._select_model_for_feature(feature)
+            model = self._select_model_for_feature(claimed_feature)
 
-            # Create worktree
-            timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-            branch_name = f"feat/{feature_id}-{timestamp}"
+            # Allocate ports for this agent
+            port_pair = self.port_allocator.allocate_ports(agent_id)
+            if not port_pair:
+                logger.error(f"   ❌ Failed to allocate ports for {agent_id}")
+                self.database.mark_feature_failed(feature_id=feature_id, reason="No ports available")
+                continue
 
-            worktree_info = self.worktree_manager.create_worktree(
-                agent_id=f"{agent_id}-{i}",
-                feature_id=feature_id,
-                feature_name=feature["name"]
-            )
+            api_port, web_port = port_pair
 
-            # Register agent in database
-            self.database.register_agent(
-                agent_id=f"{agent_id}-{i}",
-                worktree_path=worktree_info["worktree_path"],
-                feature_id=feature_id
-            )
+            # Create worktree for the claimed branch
+            try:
+                worktree_info = self.worktree_manager.create_worktree(
+                    agent_id=agent_id,
+                    feature_id=feature_id,
+                    feature_name=claimed_feature["name"],
+                    branch_name=claimed_branch,
+                )
+            except Exception as e:
+                logger.error(f"   ❌ Failed to create worktree for {agent_id}: {e}")
+                self.database.mark_feature_failed(feature_id=feature_id, reason="Worktree creation failed")
+                # Release ports on failure
+                self.port_allocator.release_ports(agent_id)
+                continue
 
-            # Run feature lifecycle (async)
-            # Note: In real implementation, this would spawn actual agent process
-            # For now, we'll mark as completed for testing
-            logger.info(f"🤖 {agent_id}-{i}: Started feature #{feature_id} - {feature['name']}")
+            # Spawn actual agent process
+            worker_script = Path(__file__).parent.parent / "agent_worker.py"
+            cmd = [
+                sys.executable,
+                str(worker_script),
+                "--project-dir", str(self.project_dir),
+                "--agent-id", agent_id,
+                "--feature-id", str(feature_id),
+                "--worktree-path", worktree_info["worktree_path"],
+                "--model", model,
+                "--max-iterations", "5",  # Each worker gets 5 iterations
+                "--api-port", str(api_port),  # Pass API port via CLI argument
+                "--web-port", str(web_port),  # Pass web port via CLI argument
+                "--yolo"  # Use YOLO mode for parallel execution (speed)
+            ]
+
+            # Prepare environment with port allocations (redundant with CLI args)
+            env = os.environ.copy()
+            env["AUTOCODER_API_PORT"] = str(api_port)
+            env["AUTOCODER_WEB_PORT"] = str(web_port)
+
+            logger.info(f"🚀 Launching {agent_id}:")
+            logger.info(f"   Feature: #{feature_id} - {claimed_feature['name']}")
             logger.info(f"   Model: {model.upper()}")
             logger.info(f"   Worktree: {worktree_info['worktree_path']}")
+            logger.info(f"   Ports: API={api_port}, WEB={web_port}")
+            logger.info(f"   Command: {' '.join(cmd[:3])}...")
 
-            spawned_agents.append(f"{agent_id}-{i}")
+            try:
+                # Spawn the process (fire and forget - monitored via DB)
+                process = subprocess.Popen(
+                    cmd,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    env=env,  # Pass environment with port allocations
+                    # Don't wait - let it run in background
+                )
+
+                pid = process.pid
+                logger.info(f"   PID: {pid}")
+
+                # Register agent in database with PID and ports
+                self.database.register_agent(
+                    agent_id=agent_id,
+                    worktree_path=worktree_info["worktree_path"],
+                    feature_id=feature_id,
+                    pid=pid,
+                    api_port=api_port,
+                    web_port=web_port
+                )
+
+                spawned_agents.append(agent_id)
+
+            except Exception as e:
+                logger.error(f"   ❌ Failed to spawn agent: {e}")
+                # Cleanup on failure
+                self.database.mark_feature_failed(feature_id=feature_id, reason="Agent spawn failed")
+                self.worktree_manager.delete_worktree(agent_id, force=True)
+                self.port_allocator.release_ports(agent_id)
+                continue
 
         return spawned_agents
 
@@ -392,23 +685,29 @@ class Orchestrator:
 
         An agent is considered crashed if:
         - It hasn't pinged in 10 minutes
-        - The process is no longer running
+        - The process is no longer running (PID doesn't exist)
+
+        Also releases allocated ports from crashed agents.
         """
         stale_agents = self.database.get_stale_agents(timeout_minutes=10)
 
         for agent in stale_agents:
             logger.warning(f"⚠️ Detected stale agent: {agent['agent_id']}")
 
-            # Check if process is still running
+            # Check if process is still running using psutil
             if agent.get("pid"):
-                try:
-                    os.kill(agent["pid"], 0)  # Check if process exists
-                except OSError:
+                pid = agent["pid"]
+                if not psutil.pid_exists(pid):
                     # Process is dead
-                    logger.warning(f"   Process {agent['pid']} is dead")
+                    logger.warning(f"   Process {pid} is dead (PID no longer exists)")
+
+                    # Release allocated ports
+                    agent_id = agent["agent_id"]
+                    if self.port_allocator.release_ports(agent_id):
+                        logger.info(f"   Released ports for {agent_id}")
 
                     # Mark as crashed
-                    self.database.mark_agent_crashed(agent["agent_id"])
+                    self.database.mark_agent_crashed(agent_id)
 
                     # Reset feature for retry
                     if agent.get("feature_id"):
@@ -423,12 +722,24 @@ class Orchestrator:
                     # Delete worktree
                     if agent.get("agent_id"):
                         self.worktree_manager.delete_worktree(
-                            agent["agent_id"],
+                            agent_id,
                             force=True
                         )
+                else:
+                    logger.info(f"   Process {pid} still running, waiting for heartbeat...")
+            else:
+                # No PID recorded - likely old-style agent, mark as crashed
+                logger.warning(f"   No PID recorded, marking as crashed")
+
+                # Release allocated ports if any
+                agent_id = agent["agent_id"]
+                if self.port_allocator.release_ports(agent_id):
+                    logger.info(f"   Released ports for {agent_id}")
+
+                self.database.mark_agent_crashed(agent_id)
 
     def _cleanup_all_agents(self):
-        """Clean up all agent worktrees."""
+        """Clean up all agent worktrees and release ports."""
         logger.info("🧹 Cleaning up all agents...")
 
         stats = self.database.get_stats()
@@ -437,6 +748,13 @@ class Orchestrator:
         if active_agents > 0:
             logger.info(f"   {active_agents} agents still registered")
 
+        # Release all allocated ports
+        port_status = self.port_allocator.get_status()
+        if port_status["active_allocations"] > 0:
+            logger.info(f"   Releasing {port_status['active_allocations']} port allocations...")
+            for agent_id in list(port_status["agents"]):
+                self.port_allocator.release_ports(agent_id)
+
         # Note: In production, you might want to keep agents running
         # This is just for cleanup when stopping the orchestrator
 
@@ -444,6 +762,7 @@ class Orchestrator:
         """Get current orchestrator status."""
         stats = self.database.get_stats()
         progress = self.database.get_progress()
+        port_status = self.port_allocator.get_status()
 
         return {
             "project_dir": str(self.project_dir),
@@ -453,6 +772,7 @@ class Orchestrator:
             "stats": stats,
             "progress": progress,
             "active_agents": stats["agents"]["active"],
+            "ports": port_status,
             "timestamp": datetime.now().isoformat()
         }
 
@@ -513,6 +833,11 @@ async def main():
         action="store_true",
         help="Show current status and exit"
     )
+    parser.add_argument(
+        "--show-ports",
+        action="store_true",
+        help="Show port allocation status and exit"
+    )
 
     args = parser.parse_args()
 
@@ -522,6 +847,30 @@ async def main():
         max_agents=args.parallel,
         model_preset=args.preset
     )
+
+    # Show port status?
+    if args.show_ports:
+        status = orchestrator.get_status()
+        print("\n" + "=" * 60)
+        print("PORT ALLOCATION STATUS")
+        print("=" * 60)
+        ports = status["ports"]
+        print(f"\nAPI Ports:")
+        print(f"  Range: {ports['api_ports']['range']}")
+        print(f"  Available: {ports['api_ports']['available']}")
+        print(f"  In Use: {ports['api_ports']['in_use']}")
+        print(f"\nWeb Ports:")
+        print(f"  Range: {ports['web_ports']['range']}")
+        print(f"  Available: {ports['web_ports']['available']}")
+        print(f"  In Use: {ports['web_ports']['in_use']}")
+        print(f"\nActive Allocations: {ports['active_allocations']}")
+        if ports["agents"]:
+            print(f"Agents with ports:")
+            for agent in ports["agents"]:
+                p = self.port_allocator.get_agent_ports(agent)
+                print(f"  {agent}: API={p[0]}, WEB={p[1]}")
+        print("=" * 60)
+        return 0
 
     # Show status?
     if args.show_status:
@@ -535,6 +884,10 @@ async def main():
         print(f"Available Models: {', '.join(status['available_models'])}")
         print(f"\nProgress: {status['progress']['passing']}/{status['progress']['total']} ({status['progress']['percentage']}%)")
         print(f"Active Agents: {status['active_agents']}")
+        ports = status["ports"]
+        print(f"\nPort Usage:")
+        print(f"  API: {ports['api_ports']['in_use']}/{ports['api_ports']['total']}")
+        print(f"  Web: {ports['web_ports']['in_use']}/{ports['web_ports']['total']}")
         print("=" * 60)
         return 0
 
