@@ -61,8 +61,9 @@ class Database:
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     name TEXT NOT NULL,
                     description TEXT,
+                    steps TEXT,
                     category TEXT,
-                    status TEXT DEFAULT 'pending',
+                    status TEXT DEFAULT 'PENDING',
                     priority INTEGER DEFAULT 0,
 
                     -- Agent assignment
@@ -88,6 +89,34 @@ class Database:
                 )
             """)
 
+            # Migration: Add steps column if it doesn't exist (for existing databases)
+            try:
+                cursor.execute("ALTER TABLE features ADD COLUMN steps TEXT")
+                logger.info("Added steps column to existing features table")
+            except sqlite3.OperationalError:
+                # Column already exists (or table just created with it)
+                pass
+
+            # Migration: Add port columns to agent_heartbeats if they don't exist
+            try:
+                cursor.execute("ALTER TABLE agent_heartbeats ADD COLUMN api_port INTEGER")
+                logger.info("Added api_port column to existing agent_heartbeats table")
+            except sqlite3.OperationalError:
+                pass  # Column already exists
+
+            try:
+                cursor.execute("ALTER TABLE agent_heartbeats ADD COLUMN web_port INTEGER")
+                logger.info("Added web_port column to existing agent_heartbeats table")
+            except sqlite3.OperationalError:
+                pass  # Column already exists
+
+            # Migration: Normalize legacy lowercase statuses to uppercase
+            cursor.execute("""
+                UPDATE features
+                SET status = UPPER(status)
+                WHERE status IS NOT NULL AND status != UPPER(status)
+            """)
+
             # Agent heartbeats table
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS agent_heartbeats (
@@ -103,6 +132,10 @@ class Database:
                     -- Process tracking
                     pid INTEGER,
                     started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+                    -- Port allocation
+                    api_port INTEGER,
+                    web_port INTEGER,
 
                     FOREIGN KEY (feature_id) REFERENCES features(id)
                 )
@@ -182,17 +215,49 @@ class Database:
         name: str,
         description: str,
         category: str,
+        steps: Optional[str] = None,
         priority: int = 0
     ) -> int:
         """Create a new feature and return its ID."""
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("""
-                INSERT INTO features (name, description, category, priority)
-                VALUES (?, ?, ?, ?)
-            """, (name, description, category, priority))
+                INSERT INTO features (name, description, category, steps, priority, status)
+                VALUES (?, ?, ?, ?, ?, 'PENDING')
+            """, (name, description, category, steps, priority))
             conn.commit()
             return cursor.lastrowid
+
+    def create_features_bulk(
+        self,
+        features: List[Dict[str, Any]]
+    ) -> int:
+        """
+        Create multiple features in a single transaction.
+
+        Args:
+            features: List of feature dicts with keys: name, description, category, steps, priority
+
+        Returns:
+            Number of features created
+        """
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.executemany("""
+                INSERT INTO features (name, description, category, steps, priority, status)
+                VALUES (?, ?, ?, ?, ?, 'PENDING')
+            """, [
+                (
+                    f.get("name"),
+                    f.get("description"),
+                    f.get("category"),
+                    json.dumps(f.get("steps")) if f.get("steps") else None,
+                    f.get("priority", 0)
+                )
+                for f in features
+            ])
+            conn.commit()
+            return cursor.rowcount
 
     def get_feature(self, feature_id: int) -> Optional[Dict[str, Any]]:
         """Get a feature by ID."""
@@ -204,11 +269,12 @@ class Database:
 
     def get_features_by_status(self, status: str) -> List[Dict[str, Any]]:
         """Get all features with a specific status."""
+        normalized = status.upper() if status else status
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute(
                 "SELECT * FROM features WHERE status = ? ORDER BY priority DESC, id ASC",
-                (status,)
+                (normalized,)
             )
             return [dict(row) for row in cursor.fetchall()]
 
@@ -218,12 +284,35 @@ class Database:
             cursor = conn.cursor()
             cursor.execute("""
                 SELECT * FROM features
-                WHERE status = 'pending'
+                WHERE status = 'PENDING'
                 ORDER BY priority DESC, id ASC
                 LIMIT 1
             """)
             row = cursor.fetchone()
             return dict(row) if row else None
+
+    def get_passing_features_for_regression(
+        self,
+        limit: int = 3
+    ) -> List[Dict[str, Any]]:
+        """
+        Get random passing features for regression testing.
+
+        Args:
+            limit: Maximum number of features to return
+
+        Returns:
+            List of passing features (randomly selected)
+        """
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT * FROM features
+                WHERE passes = TRUE AND status = 'DONE'
+                ORDER BY RANDOM()
+                LIMIT ?
+            """, (limit,))
+            return [dict(row) for row in cursor.fetchall()]
 
     def claim_feature(
         self,
@@ -239,11 +328,10 @@ class Database:
         with self.get_connection() as conn:
             cursor = conn.cursor()
 
-            # Use row locking to prevent race conditions
+            # Transaction provides locking (no FOR UPDATE needed in SQLite)
             cursor.execute("""
                 SELECT id FROM features
-                WHERE id = ? AND status = 'pending'
-                FOR UPDATE
+                WHERE id = ? AND status = 'PENDING'
             """, (feature_id,))
 
             row = cursor.fetchone()
@@ -253,7 +341,7 @@ class Database:
             # Claim the feature
             cursor.execute("""
                 UPDATE features
-                SET status = 'in_progress',
+                SET status = 'IN_PROGRESS',
                     assigned_agent_id = ?,
                     assigned_at = CURRENT_TIMESTAMP,
                     branch_name = ?,
@@ -286,14 +374,13 @@ class Database:
 
             claimed_ids = []
 
-            # Claim features one by one with row locking
+            # Claim features one by one (transaction provides locking)
             for i in range(count):
                 cursor.execute("""
                     SELECT id FROM features
-                    WHERE status = 'pending'
+                    WHERE status = 'PENDING'
                     ORDER BY priority DESC, id ASC
                     LIMIT 1
-                    FOR UPDATE
                 """)
 
                 row = cursor.fetchone()
@@ -305,7 +392,7 @@ class Database:
 
                 cursor.execute("""
                     UPDATE features
-                    SET status = 'in_progress',
+                    SET status = 'IN_PROGRESS',
                         assigned_agent_id = ?,
                         assigned_at = CURRENT_TIMESTAMP,
                         branch_name = ?,
@@ -325,6 +412,8 @@ class Database:
         review_status: Optional[str] = None
     ) -> bool:
         """Update feature status."""
+        normalized_status = status.upper() if status else status
+        normalized_review_status = review_status.upper() if review_status else None
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("""
@@ -333,7 +422,7 @@ class Database:
                     review_status = COALESCE(?, review_status),
                     updated_at = CURRENT_TIMESTAMP
                 WHERE id = ?
-            """, (status, review_status, feature_id))
+            """, (normalized_status, normalized_review_status, feature_id))
             conn.commit()
             return cursor.rowcount > 0
 
@@ -343,7 +432,7 @@ class Database:
             cursor = conn.cursor()
             cursor.execute("""
                 UPDATE features
-                SET status = 'done',
+                SET status = 'DONE',
                     passes = TRUE,
                     completed_at = CURRENT_TIMESTAMP,
                     updated_at = CURRENT_TIMESTAMP
@@ -362,7 +451,7 @@ class Database:
             cursor = conn.cursor()
             cursor.execute("""
                 UPDATE features
-                SET status = 'pending',
+                SET status = 'PENDING',
                     assigned_agent_id = NULL,
                     assigned_at = NULL,
                     branch_name = NULL,
@@ -382,15 +471,17 @@ class Database:
         agent_id: str,
         pid: Optional[int] = None,
         worktree_path: Optional[str] = None,
-        feature_id: Optional[int] = None
+        feature_id: Optional[int] = None,
+        api_port: Optional[int] = None,
+        web_port: Optional[int] = None
     ) -> bool:
         """Register an agent as active."""
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("""
-                INSERT INTO agent_heartbeats (agent_id, pid, worktree_path, feature_id)
-                VALUES (?, ?, ?, ?)
-            """, (agent_id, pid, worktree_path, feature_id))
+                INSERT INTO agent_heartbeats (agent_id, pid, worktree_path, feature_id, api_port, web_port)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (agent_id, pid, worktree_path, feature_id, api_port, web_port))
             conn.commit()
             return True
 
@@ -429,10 +520,24 @@ class Database:
             cursor = conn.cursor()
             cursor.execute("""
                 SELECT * FROM agent_heartbeats
-                WHERE last_ping < datetime('now', '-' || ? || ' minutes')
+                WHERE status = 'ACTIVE'
+                  AND last_ping < datetime('now', '-' || ? || ' minutes')
                 ORDER BY last_ping ASC
             """, (timeout_minutes,))
             return [dict(row) for row in cursor.fetchall()]
+
+    def mark_agent_completed(self, agent_id: str) -> bool:
+        """Mark an agent as completed (no longer eligible for stale/crash detection)."""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                UPDATE agent_heartbeats
+                SET last_ping = CURRENT_TIMESTAMP,
+                    status = 'COMPLETED'
+                WHERE agent_id = ?
+            """, (agent_id,))
+            conn.commit()
+            return cursor.rowcount > 0
 
     def mark_agent_crashed(self, agent_id: str) -> bool:
         """Mark an agent as crashed."""
@@ -497,11 +602,11 @@ class Database:
         with self.get_connection() as conn:
             cursor = conn.cursor()
 
-            # Feature counts
-            cursor.execute("SELECT COUNT(*) FROM features WHERE status = 'pending'")
+            # Feature counts (use uppercase status values)
+            cursor.execute("SELECT COUNT(*) FROM features WHERE status = 'PENDING'")
             pending = cursor.fetchone()[0]
 
-            cursor.execute("SELECT COUNT(*) FROM features WHERE status = 'in_progress'")
+            cursor.execute("SELECT COUNT(*) FROM features WHERE status = 'IN_PROGRESS'")
             in_progress = cursor.fetchone()[0]
 
             cursor.execute("SELECT COUNT(*) FROM features WHERE passes = TRUE")
