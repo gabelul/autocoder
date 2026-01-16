@@ -137,6 +137,14 @@ autocoder-ui
 
 If the agent fails due to missing authentication, the UI log stream will emit a short fix-it hint (e.g. `claude login` or env var guidance).
 
+### Model Settings
+
+Model selection is configured in Settings → Models:
+
+- Feature workers use the configured preset/custom selection (`opus|sonnet|haiku` tiers).
+- The Web UI **Assistant Chat Model** can be overridden separately (Auto/Opus/Sonnet/Haiku).
+- Full provider model IDs can be overridden via `.env` with `ANTHROPIC_DEFAULT_{OPUS,SONNET,HAIKU}_MODEL`.
+
 ### Parallel-Safe Feature Claiming
 
 When running multiple agents (or multiple Claude Agent SDK sessions), feature selection must be atomic to avoid two sessions picking the same work item.
