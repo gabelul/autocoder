@@ -10,6 +10,7 @@ import { useEffect, useRef, useState, useCallback } from 'react'
 import { ChevronUp, ChevronDown, Trash2, Terminal, GripHorizontal, FileText, Server } from 'lucide-react'
 import { WorkerLogsPanel } from './WorkerLogsPanel'
 import { DevServerControl } from './DevServerControl'
+import { TerminalTabsPanel } from './TerminalTabsPanel'
 
 const MIN_HEIGHT = 150
 const MAX_HEIGHT = 600
@@ -23,7 +24,7 @@ interface DebugLogViewerProps {
   onClear: () => void
   onHeightChange?: (height: number) => void
   projectName?: string | null
-  openTab?: 'live' | 'workers' | 'devserver'
+  openTab?: 'live' | 'workers' | 'devserver' | 'terminal'
 }
 
 type LogLevel = 'error' | 'warn' | 'debug' | 'info'
@@ -40,7 +41,7 @@ export function DebugLogViewer({
   const scrollRef = useRef<HTMLDivElement>(null)
   const [autoScroll, setAutoScroll] = useState(true)
   const [isResizing, setIsResizing] = useState(false)
-  const [tab, setTab] = useState<'live' | 'workers' | 'devserver'>(openTab)
+  const [tab, setTab] = useState<'live' | 'workers' | 'devserver' | 'terminal'>(openTab)
   const [panelHeight, setPanelHeight] = useState(() => {
     // Load saved height from localStorage
     const saved = localStorage.getItem(STORAGE_KEY)
@@ -243,6 +244,18 @@ export function DebugLogViewer({
               >
                 Dev
               </button>
+              <button
+                className={`px-2 py-1 text-xs font-mono rounded border border-[#333] ${
+                  tab === 'terminal' ? 'bg-[#333] text-white' : 'text-gray-400 hover:bg-[#222]'
+                }`}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  setTab('terminal')
+                }}
+                title="Interactive terminal"
+              >
+                Term
+              </button>
             </div>
           )}
         </div>
@@ -313,13 +326,23 @@ export function DebugLogViewer({
                 </div>
               )}
             </div>
-          ) : (
+          ) : tab === 'devserver' ? (
             <div className="h-full p-2 overflow-hidden">
               {projectName ? (
                 <DevServerControl projectName={projectName} />
               ) : (
                 <div className="flex items-center justify-center h-full text-gray-500 font-mono text-sm">
                   Select a project to manage a dev server.
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="h-full p-2 overflow-hidden">
+              {projectName ? (
+                <TerminalTabsPanel projectName={projectName} />
+              ) : (
+                <div className="flex items-center justify-center h-full text-gray-500 font-mono text-sm">
+                  Select a project to use terminals.
                 </div>
               )}
             </div>
