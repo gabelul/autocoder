@@ -37,6 +37,7 @@ from .routers import (
     diagnostics_router,
     worktrees_router,
     devserver_router,
+    terminal_router,
 )
 from .websocket import project_websocket
 from .services.process_manager import cleanup_all_managers
@@ -44,6 +45,8 @@ from .services.assistant_chat_session import cleanup_all_sessions as cleanup_ass
 from .services.expand_chat_session import cleanup_all_expand_sessions
 from .services.dev_server_manager import cleanup_all_dev_servers
 from .routers.devserver import devserver_websocket
+from .services.terminal_manager import cleanup_all_terminals
+from .routers.terminal import terminal_websocket
 from .schemas import SetupStatus
 from autocoder.core.port_config import get_ui_port, get_ui_cors_origins
 
@@ -84,6 +87,7 @@ async def lifespan(app: FastAPI):
     await cleanup_assistant_sessions()
     await cleanup_all_expand_sessions()
     await cleanup_all_dev_servers()
+    await cleanup_all_terminals()
 
 
 # Create FastAPI app
@@ -140,6 +144,7 @@ app.include_router(project_config_router)
 app.include_router(diagnostics_router)
 app.include_router(worktrees_router)
 app.include_router(devserver_router)
+app.include_router(terminal_router)
 
 
 # ============================================================================
@@ -156,6 +161,12 @@ async def websocket_endpoint(websocket: WebSocket, project_name: str):
 async def devserver_ws_endpoint(websocket: WebSocket, project_name: str):
     """WebSocket endpoint for dev server logs/status."""
     await devserver_websocket(websocket, project_name)
+
+
+@app.websocket("/ws/projects/{project_name}/terminal/{terminal_id}")
+async def terminal_ws_endpoint(websocket: WebSocket, project_name: str, terminal_id: str):
+    """WebSocket endpoint for interactive terminal I/O."""
+    await terminal_websocket(websocket, project_name, terminal_id)
 
 
 # ============================================================================

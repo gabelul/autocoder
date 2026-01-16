@@ -41,7 +41,7 @@ function App() {
   const [debugOpen, setDebugOpen] = useState(false)
   const [debugPanelHeight, setDebugPanelHeight] = useState(288) // Default height
   const [assistantOpen, setAssistantOpen] = useState(false)
-  const [logsTab, setLogsTab] = useState<'live' | 'workers' | 'devserver'>('live')
+  const [logsTab, setLogsTab] = useState<'live' | 'workers' | 'devserver' | 'terminal'>('live')
   const [showSettings, setShowSettings] = useState(false)
   const [route, setRoute] = useState<'main' | 'settings'>(() =>
     window.location.hash.startsWith('#/settings') ? 'settings' : 'main'
@@ -143,6 +143,13 @@ function App() {
       if ((e.key === 'l' || e.key === 'L') && selectedProject) {
         e.preventDefault()
         setLogsTab('workers')
+        setDebugOpen(true)
+      }
+
+      // T : Toggle terminal tab
+      if ((e.key === 't' || e.key === 'T') && selectedProject) {
+        e.preventDefault()
+        setLogsTab('terminal')
         setDebugOpen(true)
       }
 
