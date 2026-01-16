@@ -20,6 +20,7 @@ from typing import AsyncGenerator, Optional
 from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
 
 from ...core.port_config import get_api_port, get_web_port
+from ...core.model_settings import ModelSettings, get_full_model_id
 from .assistant_database import (
     create_conversation,
     add_message,
@@ -332,7 +333,13 @@ class AssistantChatSession:
         system_cli = shutil.which(cli_command)
         sdk_env = {var: os.getenv(var) for var in API_ENV_VARS if os.getenv(var)}
 
-        model = os.getenv("ANTHROPIC_DEFAULT_OPUS_MODEL", "claude-opus-4-5-20251101")
+        model_settings = ModelSettings.load()
+        assistant_family = model_settings.assistant_model or (
+            model_settings.available_models[0]
+            if model_settings.available_models
+            else model_settings.fallback_model
+        )
+        model = get_full_model_id(assistant_family)
 
         try:
             self.client = ClaudeSDKClient(
