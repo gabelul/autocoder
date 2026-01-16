@@ -78,6 +78,10 @@ class ModelSettings:
     # Auto-detect simple tasks for cheaper models
     auto_detect_simple: bool = True
 
+    # Optional override for the Web UI Assistant chat model.
+    # If None, the assistant uses the best available model.
+    assistant_model: ModelName | None = None
+
     # Simple task keywords (trigger cheapest available model)
     simple_keywords: list[str] = field(default_factory=lambda: [
         "test", "testing", "unit test", "integration test",
@@ -104,6 +108,9 @@ class ModelSettings:
 
         if not self.available_models:
             self.available_models = ["opus"]  # Fallback
+
+        if self.assistant_model not in valid_models:
+            self.assistant_model = None
 
         # Set default category mapping if not provided
         if not self.category_mapping:
@@ -280,6 +287,7 @@ class ModelSettings:
             "category_mapping": self.category_mapping,
             "fallback_model": self.fallback_model,
             "auto_detect_simple": self.auto_detect_simple,
+            "assistant_model": self.assistant_model,
             "simple_keywords": self.simple_keywords,
             "complex_keywords": self.complex_keywords
         }
@@ -386,10 +394,19 @@ def get_full_model_id(model_name: ModelName) -> str:
         >>> get_full_model_id("haiku")
         "claude-haiku-4-20250919"
     """
+    env_map = {
+        "opus": os.environ.get("ANTHROPIC_DEFAULT_OPUS_MODEL"),
+        "sonnet": os.environ.get("ANTHROPIC_DEFAULT_SONNET_MODEL"),
+        "haiku": os.environ.get("ANTHROPIC_DEFAULT_HAIKU_MODEL"),
+    }
+    override = (env_map.get(model_name) or "").strip()
+    if override:
+        return override
+
     model_ids = {
         "opus": "claude-opus-4-5-20251101",
         "sonnet": "claude-sonnet-4-5-20250929",
-        "haiku": "claude-haiku-4-20250919"
+        "haiku": "claude-haiku-4-20250919",
     }
     return model_ids.get(model_name, model_ids["opus"])
 

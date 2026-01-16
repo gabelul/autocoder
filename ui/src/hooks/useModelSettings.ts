@@ -13,6 +13,7 @@ export interface ModelSettings {
   category_mapping: Record<string, string>;
   fallback_model: string;
   auto_detect_simple: boolean;
+  assistant_model?: 'opus' | 'sonnet' | 'haiku' | null;
 }
 
 export interface PresetInfo {

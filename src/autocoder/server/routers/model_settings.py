@@ -31,6 +31,7 @@ class ModelSettingsResponse(BaseModel):
     category_mapping: dict
     fallback_model: str
     auto_detect_simple: bool
+    assistant_model: str | None = None
 
 
 class UpdateSettingsRequest(BaseModel):
@@ -38,6 +39,9 @@ class UpdateSettingsRequest(BaseModel):
     preset: str | None = Field(None, description="Preset name (quality, balanced, economy, cheap, experimental)")
     available_models: List[str] | None = Field(None, description="List of available models (opus, sonnet, haiku)")
     auto_detect_simple: bool | None = Field(None, description="Enable auto-detection of simple tasks")
+    assistant_model: Literal["opus", "sonnet", "haiku"] | None = Field(
+        None, description="Optional assistant chat model override (opus, sonnet, haiku)"
+    )
 
 
 class ApplyPresetRequest(BaseModel):
@@ -83,7 +87,8 @@ async def get_model_settings():
         available_models=settings.available_models,
         category_mapping=settings.category_mapping,
         fallback_model=settings.fallback_model,
-        auto_detect_simple=settings.auto_detect_simple
+        auto_detect_simple=settings.auto_detect_simple,
+        assistant_model=settings.assistant_model,
     )
 
 
@@ -114,6 +119,9 @@ async def update_model_settings(request: UpdateSettingsRequest):
     if request.auto_detect_simple is not None:
         settings.auto_detect_simple = request.auto_detect_simple
 
+    if request.assistant_model is not None:
+        settings.assistant_model = request.assistant_model
+
     # Save settings
     save_global_settings(settings)
 
@@ -124,7 +132,8 @@ async def update_model_settings(request: UpdateSettingsRequest):
             available_models=settings.available_models,
             category_mapping=settings.category_mapping,
             fallback_model=settings.fallback_model,
-            auto_detect_simple=settings.auto_detect_simple
+            auto_detect_simple=settings.auto_detect_simple,
+            assistant_model=settings.assistant_model,
         )
     }
 
@@ -152,7 +161,8 @@ async def apply_preset(request: ApplyPresetRequest):
             available_models=settings.available_models,
             category_mapping=settings.category_mapping,
             fallback_model=settings.fallback_model,
-            auto_detect_simple=settings.auto_detect_simple
+            auto_detect_simple=settings.auto_detect_simple,
+            assistant_model=settings.assistant_model,
         )
     }
 
