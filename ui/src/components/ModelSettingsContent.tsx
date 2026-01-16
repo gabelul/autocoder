@@ -24,6 +24,7 @@ export function ModelSettingsContent({ onPresetApplied }: { onPresetApplied?: (p
     sonnet: false,
     haiku: true,
   })
+  const [assistantModel, setAssistantModel] = useState<'auto' | 'opus' | 'sonnet' | 'haiku'>('auto')
 
   useEffect(() => {
     if (settings?.preset) setSelectedPreset(settings.preset)
@@ -39,6 +40,9 @@ export function ModelSettingsContent({ onPresetApplied }: { onPresetApplied?: (p
         sonnet: settings.available_models.includes('sonnet'),
         haiku: settings.available_models.includes('haiku'),
       })
+    }
+    if (settings && typeof settings.assistant_model !== 'undefined') {
+      setAssistantModel(settings.assistant_model ? settings.assistant_model : 'auto')
     }
   }, [settings])
 
@@ -68,6 +72,11 @@ export function ModelSettingsContent({ onPresetApplied }: { onPresetApplied?: (p
     const newValue = !autoDetect
     setAutoDetect(newValue)
     updateSettings.mutate({ auto_detect_simple: newValue })
+  }
+
+  const applyAssistantModel = async (next: 'auto' | 'opus' | 'sonnet' | 'haiku') => {
+    setAssistantModel(next)
+    await updateSettings.mutateAsync({ assistant_model: next === 'auto' ? null : next })
   }
 
   if (isLoading) {
@@ -263,6 +272,27 @@ export function ModelSettingsContent({ onPresetApplied }: { onPresetApplied?: (p
             />
           </button>
         </label>
+      </div>
+
+      {/* Assistant model override */}
+      <div className="neo-card p-4">
+        <div className="font-display font-bold text-base mb-1">Assistant Chat Model</div>
+        <div className="text-sm text-[var(--color-neo-text-secondary)] mb-3">
+          Controls the model used by the Web UI Assistant (not the feature workers).
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {(['auto', 'opus', 'sonnet', 'haiku'] as const).map((m) => (
+            <button
+              key={m}
+              className={`neo-btn text-sm ${assistantModel === m ? 'bg-[var(--color-neo-accent)] text-white' : 'neo-btn-secondary'}`}
+              onClick={() => applyAssistantModel(m)}
+              disabled={updateSettings.isPending}
+              title={m === 'auto' ? 'Use the best available model' : `Force ${m.toUpperCase()}`}
+            >
+              {m === 'auto' ? 'Auto' : m.toUpperCase()}
+            </button>
+          ))}
+        </div>
       </div>
     </div>
   )
