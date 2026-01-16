@@ -21,6 +21,7 @@ from .diagnostics import router as diagnostics_router
 from .worktrees import router as worktrees_router
 from .expand_project import router as expand_project_router
 from .devserver import router as devserver_router
+from .terminal import router as terminal_router
 
 __all__ = [
     "projects_router",
@@ -39,4 +40,5 @@ __all__ = [
     "diagnostics_router",
     "worktrees_router",
     "devserver_router",
+    "terminal_router",
 ]
