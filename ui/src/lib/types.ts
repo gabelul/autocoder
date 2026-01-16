@@ -269,6 +269,16 @@ export interface DevServerWSLogMessage {
 
 export type DevServerWSMessage = DevServerWSStatusMessage | DevServerWSLogMessage
 
+// ============================================================================
+// Terminal Types
+// ============================================================================
+
+export interface TerminalInfo {
+  id: string
+  name: string
+  created_at: string
+}
+
 // WebSocket message types
 export type WSMessageType = 'progress' | 'feature_update' | 'log' | 'agent_status' | 'pong'
 

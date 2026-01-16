@@ -34,6 +34,7 @@ dependencies = [
     "python-multipart>=0.0.17",
     "psutil>=6.0.0",
     "aiofiles>=24.0.0",
+    "pywinpty>=2.0.14; platform_system == 'Windows'",
 ]
 
 [project.optional-dependencies]

@@ -193,6 +193,14 @@ For projects with a runnable dev server (e.g. `package.json` has `dev`/`start`, 
 
 The UI will stream dev server output and show the latest detected localhost URL.
 
+### Interactive Terminal (Web UI)
+
+Use the bottom drawer to open an interactive shell rooted in the project directory:
+
+- Open the bottom drawer (press `D`)
+- Switch to the **Term** tab (shortcut: press `T`)
+- Create/rename/close terminal tabs as needed
+
 ### Reliability & Retry Loop Prevention
 
 Parallel mode is designed to be self-healing without getting stuck in infinite retries:
