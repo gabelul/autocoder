@@ -18,6 +18,8 @@ import logging
 import os
 import platform
 import shutil
+import subprocess
+import sys
 import threading
 import uuid
 from dataclasses import dataclass, field
@@ -36,6 +38,7 @@ class TerminalInfo:
 
 
 IS_WINDOWS = platform.system() == "Windows"
+_WINPTY_INSTALL_ATTEMPTED = False
 
 if IS_WINDOWS:
     try:
@@ -45,10 +48,6 @@ if IS_WINDOWS:
     except Exception:
         WinPtyProcess = None  # type: ignore[assignment]
         WINPTY_AVAILABLE = False
-        logger.warning(
-            "pywinpty not installed. Terminal sessions won't be available on Windows. "
-            "Install with: pip install pywinpty"
-        )
 else:
     import fcntl
     import pty
@@ -58,6 +57,61 @@ else:
     import termios
 
     WINPTY_AVAILABLE = False
+
+
+def _auto_install_winpty_enabled() -> bool:
+    raw = str(os.environ.get("AUTOCODER_AUTO_INSTALL_WINPTY", "1")).strip().lower()
+    return raw not in {"0", "false", "no", "off"}
+
+
+def _try_import_winpty() -> bool:
+    global WinPtyProcess, WINPTY_AVAILABLE
+    try:
+        from winpty import PtyProcess as WinPtyProcess  # type: ignore[import-not-found]
+
+        WINPTY_AVAILABLE = True
+        return True
+    except Exception:
+        WinPtyProcess = None  # type: ignore[assignment]
+        WINPTY_AVAILABLE = False
+        return False
+
+
+def _ensure_winpty() -> bool:
+    global _WINPTY_INSTALL_ATTEMPTED
+    if WINPTY_AVAILABLE:
+        return True
+    if not IS_WINDOWS:
+        return False
+    if not _auto_install_winpty_enabled():
+        return False
+    if _WINPTY_INSTALL_ATTEMPTED:
+        return False
+    _WINPTY_INSTALL_ATTEMPTED = True
+
+    logger.info("Installing pywinpty for UI terminals (Windows)...")
+    try:
+        result = subprocess.run(
+            [sys.executable, "-m", "pip", "install", "-q", "pywinpty"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if result.returncode != 0:
+            logger.warning("pywinpty install failed (code %s).", result.returncode)
+            if result.stderr:
+                logger.debug("pywinpty install stderr: %s", result.stderr.strip())
+            return False
+    except Exception as e:
+        logger.warning("pywinpty auto-install failed: %s", e)
+        return False
+
+    return _try_import_winpty()
+
+
+# Eager install on Windows to keep UI logs clean and terminals ready.
+if IS_WINDOWS and not WINPTY_AVAILABLE and _auto_install_winpty_enabled():
+    _ensure_winpty()
 
 
 def _get_shell() -> str:
@@ -137,6 +191,12 @@ class TerminalSession:
         try:
             if IS_WINDOWS:
                 if not WINPTY_AVAILABLE:
+                    _ensure_winpty()
+                if not WINPTY_AVAILABLE:
+                    logger.warning(
+                        "Windows terminal sessions disabled (pywinpty not available). "
+                        "Set AUTOCODER_AUTO_INSTALL_WINPTY=1 or run: pip install pywinpty"
+                    )
                     return False
                 assert WinPtyProcess is not None
                 self._pty_process = WinPtyProcess.spawn(

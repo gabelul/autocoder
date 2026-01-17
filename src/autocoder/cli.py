@@ -896,7 +896,7 @@ Examples:
                 print("\n❌ Cannot launch UI - build failed or Node.js not installed.")
                 return
             print("\n🚀 Starting Web UI...")
-            print(f"   Open http://127.0.0.1:{get_ui_port()} in your browser")
+            print(f"   Opening http://127.0.0.1:{get_ui_port()} (set AUTOCODER_OPEN_UI=0 to disable)")
             print("   Press Ctrl+C to stop\n")
             try:
                 start_server()

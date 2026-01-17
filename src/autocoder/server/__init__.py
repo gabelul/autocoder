@@ -7,8 +7,12 @@ Provides REST API and WebSocket endpoints for project management,
 feature tracking, and agent control.
 """
 
+import contextlib
 import os
 import sys
+import threading
+import time
+import webbrowser
 import uvicorn
 from pathlib import Path
 
@@ -37,7 +41,32 @@ def start_server(host: str = "127.0.0.1", port: int | None = None, reload: bool 
         else:
             use_colors = None
     disable_lock = str(os.environ.get("AUTOCODER_DISABLE_UI_LOCK", "")).lower() in ("1", "true", "yes")
+
+    def should_open_browser() -> bool:
+        raw = str(os.environ.get("AUTOCODER_OPEN_UI", "")).strip().lower()
+        if raw:
+            return raw not in ("0", "false", "no", "off")
+        return True
+
+    def open_browser_later() -> None:
+        if host not in ("127.0.0.1", "localhost"):
+            return
+        if not should_open_browser():
+            return
+        try:
+            delay = float(os.environ.get("AUTOCODER_OPEN_UI_DELAY_S", "1.0"))
+        except ValueError:
+            delay = 1.0
+        url = f"http://{host}:{port}/"
+
+        def _worker() -> None:
+            time.sleep(max(0.0, delay))
+            with contextlib.suppress(Exception):
+                webbrowser.open(url, new=2)
+
+        threading.Thread(target=_worker, daemon=True).start()
     if disable_lock:
+        open_browser_later()
         uvicorn.run(
             "autocoder.server.main:app",
             host=host,
@@ -48,6 +77,7 @@ def start_server(host: str = "127.0.0.1", port: int | None = None, reload: bool 
         return
 
     with ServerLock(port):
+        open_browser_later()
         uvicorn.run(
             "autocoder.server.main:app",
             host=host,

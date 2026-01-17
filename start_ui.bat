@@ -7,6 +7,10 @@ echo   AutoCoder - Web UI
 echo   Modded by Gabi (Booplex)
 echo ====================================
 echo.
+set UI_PORT=%AUTOCODER_UI_PORT%
+if "%UI_PORT%"=="" set UI_PORT=8888
+echo   Opening http://127.0.0.1:%UI_PORT%  (set AUTOCODER_OPEN_UI=0 to disable)
+echo.
 
 REM Load .env file if it exists
 if exist .env (

@@ -142,6 +142,8 @@ autocoder-ui
 - When the UI starts a run, **saved** advanced settings override `.env`/shell env vars. If you’ve never saved Advanced Settings, the UI does not override env vars.
 - Provider badge: when a project is selected, the header shows **ALT API** (custom endpoint) or **GLM** (z.ai/GLM-style endpoint) if configured via `.env`.
 - Diagnostics: open `http://127.0.0.1:8888/#/settings/diagnostics` (system status, configurable fixtures dir, deterministic E2E fixtures, recent run logs).
+- The UI auto-opens your browser on launch (disable with `AUTOCODER_OPEN_UI=0`).
+- On Windows, terminal sessions auto-install `pywinpty` (disable with `AUTOCODER_AUTO_INSTALL_WINPTY=0`).
 
 If the agent fails due to missing authentication, the UI log stream will emit a short fix-it hint (e.g. `claude login` or env var guidance).
 
