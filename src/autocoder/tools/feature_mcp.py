@@ -333,6 +333,17 @@ def feature_mark_in_progress(feature_id: int) -> str:
 def feature_skip(feature_id: int) -> str:
     """Skip a feature (reset to pending for later implementation).
 
+    Use this ONLY for truly external blockers you cannot control:
+    - External API credentials not configured (e.g., Stripe keys, OAuth secrets)
+    - External service unavailable or inaccessible
+    - Hardware/environment limitations you cannot fulfill
+
+    DO NOT skip for:
+    - Missing functionality (build it yourself)
+    - Refactoring features (implement them like any other feature)
+    - "Unclear requirements" (interpret the intent and implement)
+    - Dependencies on other features (build those first)
+
     Args:
         feature_id: The ID of the feature to skip
 

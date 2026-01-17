@@ -360,6 +360,7 @@ async def skip_feature(project_name: str, feature_id: int):
     Mark a feature as skipped by moving it to the end of the priority queue.
 
     This doesn't delete the feature; it increases priority so it will be processed last.
+    Use this only for external blockers (missing credentials, unavailable services, etc.).
     """
     project_name = validate_project_name(project_name)
     project_dir = _get_project_path(project_name).resolve()
