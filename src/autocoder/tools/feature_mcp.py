@@ -15,6 +15,7 @@ Tools:
 - feature_get_all: Get all features with details
 - feature_get_by_id: Get a specific feature
 - feature_get_for_regression: Get least-tested passing features for regression testing
+- feature_report_regression: Create/update a regression issue linked to a passing feature
 - feature_mark_passing: Mark a feature as passing
 - feature_mark_in_progress: Mark a feature as in-progress
 - feature_skip: Skip a feature (move to end of queue)
@@ -70,6 +71,19 @@ class MarkInProgressInput(BaseModel):
 class RegressionInput(BaseModel):
     """Input for getting regression features."""
     limit: int = Field(default=3, ge=1, le=10, description="Maximum number of passing features to return")
+
+
+class ReportRegressionInput(BaseModel):
+    """Input for reporting a regression against an existing passing feature."""
+
+    regression_of_id: int = Field(..., ge=1, description="Passing feature ID that regressed")
+    summary: str = Field(..., min_length=1, description="Short failure summary (shown in UI)")
+    details: str | None = Field(None, description="Additional context and evidence")
+    steps: list[str] | None = Field(None, description="Suggested fix steps (optional)")
+    priority: int = Field(default=100, ge=0, description="Priority (higher = more urgent)")
+    enabled: bool = Field(default=True, description="Whether the regression issue is enabled for claiming")
+    artifact_path: str | None = Field(None, description="Optional artifact path with evidence (JSON/logs/snapshots)")
+    error_key: str | None = Field(None, description="Optional stable error key for de-duplication")
 
 
 class FeatureCreateItem(BaseModel):
@@ -306,6 +320,58 @@ def feature_mark_passing(feature_id: int) -> str:
         "message": message,
     }
 
+    return json.dumps(result, indent=2)
+
+
+@mcp.tool()
+def feature_report_regression(
+    regression_of_id: int,
+    summary: str,
+    details: str | None = None,
+    steps: list[str] | None = None,
+    priority: int = 100,
+    enabled: bool = True,
+    artifact_path: str | None = None,
+    error_key: str | None = None,
+) -> str:
+    """
+    Report a regression for an existing passing feature.
+
+    This creates an "issue-like" regression feature linked to `regression_of_id`, or updates the
+    existing open regression issue if one already exists.
+    """
+    db = get_db()
+    try:
+        validated = ReportRegressionInput(
+            regression_of_id=regression_of_id,
+            summary=summary,
+            details=details,
+            steps=steps,
+            priority=priority,
+            enabled=enabled,
+            artifact_path=artifact_path,
+            error_key=error_key,
+        )
+    except ValidationError as e:
+        return json.dumps(
+            {
+                "success": False,
+                "error": "Invalid feature_report_regression input",
+                "details": e.errors(),
+            },
+            indent=2,
+        )
+
+    result = db.create_regression_issue(
+        regression_of_id=int(validated.regression_of_id),
+        summary=str(validated.summary),
+        details=str(validated.details or ""),
+        steps=list(validated.steps or []) if validated.steps is not None else None,
+        priority=int(validated.priority),
+        enabled=bool(validated.enabled),
+        artifact_path=str(validated.artifact_path) if validated.artifact_path else None,
+        error_key=str(validated.error_key) if validated.error_key else None,
+    )
     return json.dumps(result, indent=2)
 
 

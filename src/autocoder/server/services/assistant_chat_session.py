@@ -56,6 +56,7 @@ ASSISTANT_FEATURE_MCP_TOOLS = [
     "mcp__features__feature_get_all",  # Get all features
     "mcp__features__feature_get_by_id",  # Get specific feature
     "mcp__features__feature_get_for_regression",
+    "mcp__features__feature_report_regression",
     "mcp__features__feature_create_bulk",
     "mcp__features__feature_clear_in_progress",
     "mcp__features__feature_update",  # Modify features

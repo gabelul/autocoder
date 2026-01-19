@@ -342,6 +342,18 @@ When enabled, the orchestrator will spawn a short-lived QA worker immediately af
 
 In the Web UI: Settings -> Advanced -> Automation -> QA sub-agent.
 
+### Regression Pool (optional)
+
+When enabled, the orchestrator spawns short-lived **Claude+Playwright** regression testers when there are **no claimable pending features**. Each tester picks a least-tested passing feature (`feature_get_for_regression`) and verifies it still works. If it finds a regression, it creates a new issue-like `REGRESSION` feature linked by `regression_of_id`.
+
+- Enable: `AUTOCODER_REGRESSION_POOL_ENABLED=1`
+- Max testers: `AUTOCODER_REGRESSION_POOL_MAX_AGENTS` (default `1`)
+- Min interval: `AUTOCODER_REGRESSION_POOL_MIN_INTERVAL_S` (default `600`)
+- Max iterations: `AUTOCODER_REGRESSION_POOL_MAX_ITERATIONS` (default `1`)
+- Model (optional): `AUTOCODER_REGRESSION_POOL_MODEL` (e.g. `sonnet`)
+
+In the Web UI: Settings -> Advanced -> Automation -> Regression Pool.
+
 ### Editing features (pending/in-progress)
 
 You can edit feature details (category/name/description/steps/priority) for non-completed features to help unblock the agent.

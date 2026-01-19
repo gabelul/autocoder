@@ -117,12 +117,13 @@ Uses SQLite with cross-platform path handling (POSIX-style forward slashes every
 
 ## Feature Management (Via MCP)
 
-Features live in SQLite (`features.db`). The agent talks to them through MCP tools:
+Features live in SQLite (`agent_system.db`). The agent talks to them through MCP tools:
 
 **Agent tools:**
 - `feature_get_stats` - Progress stats
 - `feature_get_next` - Get next feature to build
-- `feature_get_for_regression` - Random passing features for testing
+- `feature_get_for_regression` - Least-tested passing features for regression checks
+- `feature_report_regression` - Create/update an issue-like regression feature
 - `feature_mark_passing` - Mark feature done
 - `feature_skip` - Move to end of queue
 - `feature_create_bulk` - Initialize all features

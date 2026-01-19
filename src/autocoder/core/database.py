@@ -210,6 +210,7 @@ class Database:
 
                     -- Regression testing tracking
                     regression_count INTEGER DEFAULT 0,
+                    regression_of_id INTEGER,
 
                     -- Timestamps
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -292,6 +293,13 @@ class Database:
             try:
                 cursor.execute("ALTER TABLE features ADD COLUMN regression_count INTEGER")
                 logger.info("Added regression_count column to existing features table")
+            except sqlite3.OperationalError:
+                pass
+
+            # Migration: Add regression_of_id column if it doesn't exist (for existing databases)
+            try:
+                cursor.execute("ALTER TABLE features ADD COLUMN regression_of_id INTEGER")
+                logger.info("Added regression_of_id column to existing features table")
             except sqlite3.OperationalError:
                 pass
 
@@ -1282,6 +1290,138 @@ class Database:
             for row in rows:
                 row["regression_count"] = int(row.get("regression_count") or 0) + 1
             return rows
+
+    def create_regression_issue(
+        self,
+        *,
+        regression_of_id: int,
+        summary: str,
+        details: str | None = None,
+        steps: List[str] | None = None,
+        priority: int = 100,
+        enabled: bool = True,
+        artifact_path: str | None = None,
+        error_key: str | None = None,
+    ) -> Dict[str, Any]:
+        """
+        Create (or update) an "issue-like" regression feature linked to an existing passing feature.
+
+        If an open regression issue already exists for `regression_of_id`, this will update its
+        `last_error` and `last_artifact_path` instead of creating a duplicate.
+
+        Returns:
+            { "success": bool, "feature_id": int | None, "created": bool, "message": str }
+        """
+        regression_of_id = int(regression_of_id)
+        summary = str(summary or "").strip()
+        details = str(details or "").strip()
+        if not summary:
+            return {
+                "success": False,
+                "feature_id": None,
+                "created": False,
+                "message": "summary is required",
+            }
+
+        default_steps = [
+            "Reproduce the regression using the evidence below.",
+            "Identify the root cause and implement a fix.",
+            "Add/adjust tests to prevent recurrence (when feasible).",
+            "Run the project's deterministic verification commands and ensure they pass.",
+        ]
+        steps_json = json.dumps(steps or default_steps)
+
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+
+            cursor.execute("SELECT name FROM features WHERE id = ?", (regression_of_id,))
+            parent = cursor.fetchone()
+            parent_name = str(parent[0]) if parent and parent[0] is not None else f"feature-{regression_of_id}"
+
+            # De-dupe: if there's already an open regression issue for this feature, update it.
+            cursor.execute(
+                """
+                SELECT id FROM features
+                WHERE regression_of_id = ?
+                  AND enabled = 1
+                  AND status IN ('PENDING','IN_PROGRESS','BLOCKED')
+                ORDER BY id DESC
+                LIMIT 1
+                """,
+                (regression_of_id,),
+            )
+            existing = cursor.fetchone()
+            if existing:
+                issue_id = int(existing[0])
+                cursor.execute(
+                    """
+                    UPDATE features
+                    SET last_error = ?,
+                        last_error_key = COALESCE(?, last_error_key),
+                        last_artifact_path = COALESCE(?, last_artifact_path),
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                    """,
+                    (summary, error_key, artifact_path, issue_id),
+                )
+                conn.commit()
+                return {
+                    "success": True,
+                    "feature_id": issue_id,
+                    "created": False,
+                    "message": f"Updated existing regression issue #{issue_id} for feature #{regression_of_id}",
+                }
+
+            issue_name = f"Regression: {parent_name}"
+
+            desc_parts = [
+                f"Regression detected for feature #{regression_of_id}: {parent_name}",
+                "",
+                summary,
+            ]
+            if details:
+                desc_parts.extend(["", "Details:", details])
+            if artifact_path:
+                desc_parts.extend(["", f"Artifact: {artifact_path}"])
+            description = "\n".join([p for p in desc_parts if p is not None]).strip()
+
+            cursor.execute(
+                """
+                INSERT INTO features (
+                    name,
+                    description,
+                    steps,
+                    category,
+                    status,
+                    priority,
+                    enabled,
+                    regression_of_id,
+                    last_error,
+                    last_error_key,
+                    last_artifact_path
+                )
+                VALUES (?, ?, ?, 'REGRESSION', 'PENDING', ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    issue_name,
+                    description,
+                    steps_json,
+                    int(priority),
+                    1 if enabled else 0,
+                    regression_of_id,
+                    summary,
+                    error_key,
+                    artifact_path,
+                ),
+            )
+            issue_id = int(cursor.lastrowid)
+            conn.commit()
+            return {
+                "success": True,
+                "feature_id": issue_id,
+                "created": True,
+                "message": f"Created regression issue #{issue_id} for feature #{regression_of_id}",
+            }
 
     def claim_feature(
         self,

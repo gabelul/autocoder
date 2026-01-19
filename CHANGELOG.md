@@ -25,6 +25,7 @@ All notable changes to this fork will be listed here.
 - MCP `feature_create_bulk`: validate inputs before writing to DB
 - Worker logs: copy tail to clipboard
 - Playwright MCP now runs with `--isolated` by default (disable with `AUTOCODER_PLAYWRIGHT_ISOLATED=0`)
+- Optional regression tester pool (Claude+Playwright): creates issue-like `REGRESSION` features linked via `regression_of_id`
 - Fix: Gatekeeper verify-branch sanitization is Python 3.10 compatible
 - Fix: `test_mcp` includes missing `json` import
 

@@ -65,6 +65,13 @@ class AdvancedSettings:
     controller_model: str = ""
     controller_max_sessions: int = 0
 
+    # Regression tester pool (optional; Claude+Playwright only for now)
+    regression_pool_enabled: bool = False
+    regression_pool_max_agents: int = 1
+    regression_pool_model: str = ""
+    regression_pool_min_interval_s: int = 600
+    regression_pool_max_iterations: int = 1
+
     # Feature planner (optional; multi-model plan artifact)
     planner_enabled: bool = False
     planner_model: str = ""  # Claude model for synthesis (optional)
@@ -146,6 +153,11 @@ class AdvancedSettings:
             "AUTOCODER_CONTROLLER_ENABLED": "1" if self.controller_enabled else "0",
             "AUTOCODER_CONTROLLER_MODEL": str(self.controller_model or ""),
             "AUTOCODER_CONTROLLER_MAX_SESSIONS": str(int(self.controller_max_sessions or 0)),
+            "AUTOCODER_REGRESSION_POOL_ENABLED": "1" if self.regression_pool_enabled else "0",
+            "AUTOCODER_REGRESSION_POOL_MAX_AGENTS": str(int(self.regression_pool_max_agents or 1)),
+            "AUTOCODER_REGRESSION_POOL_MODEL": str(self.regression_pool_model or ""),
+            "AUTOCODER_REGRESSION_POOL_MIN_INTERVAL_S": str(int(self.regression_pool_min_interval_s or 600)),
+            "AUTOCODER_REGRESSION_POOL_MAX_ITERATIONS": str(int(self.regression_pool_max_iterations or 1)),
             "AUTOCODER_PLANNER_ENABLED": "1" if self.planner_enabled else "0",
             "AUTOCODER_PLANNER_MODEL": str(self.planner_model or ""),
             "AUTOCODER_PLANNER_AGENTS": str(self.planner_agents or "codex,gemini"),

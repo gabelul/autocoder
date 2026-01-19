@@ -40,6 +40,7 @@ AutoCoder is a Claude Agent SDK + MCP based coding agent. It supports single-age
 - Large backlogs may be **staged** (disabled) to keep active queues manageable; staged features can be enqueued from the UI or via `POST /features/enqueue`.
 - Agents stop when the queue is empty by default; set `AUTOCODER_STOP_WHEN_DONE=0` to keep them alive for new features.
 - Playwright MCP runs with `--isolated` by default to avoid cross-agent browser conflicts; set `AUTOCODER_PLAYWRIGHT_ISOLATED=0` to disable.
+- Optional regression tester pool (off by default): set `AUTOCODER_REGRESSION_POOL_ENABLED=1` to spawn short-lived Claude+Playwright testers when the queue has no claimable work. Detected regressions are recorded as new `REGRESSION` features linked by `regression_of_id`.
 - Skipping is for **external blockers only**; refactor/cleanup features are required work and should not be skipped. If a refactor feature conflicts with the original spec, the feature DB is the source of truth.
 - Web UI start/stop uses `<project>/.agent.lock` (atomic `PID:CREATE_TIME`) and kills the full process tree to avoid orphaned processes on Windows.
 - SQLite uses `journal_mode=WAL` by default; on network drives it falls back to `DELETE` (override with `AUTOCODER_SQLITE_JOURNAL_MODE`).

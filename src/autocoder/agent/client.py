@@ -26,6 +26,7 @@ FEATURE_MCP_TOOLS = [
     "mcp__features__feature_claim_next",
     "mcp__features__feature_get_by_id",
     "mcp__features__feature_get_for_regression",
+    "mcp__features__feature_report_regression",
     "mcp__features__feature_mark_in_progress",
     "mcp__features__feature_mark_passing",
     "mcp__features__feature_skip",

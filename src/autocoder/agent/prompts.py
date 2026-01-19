@@ -86,6 +86,12 @@ def get_coding_prompt_yolo(project_dir: Path | None = None) -> str:
     return _append_knowledge(prompt, project_dir)
 
 
+def get_testing_prompt(project_dir: Path | None = None) -> str:
+    """Load the regression/testing prompt (project-specific if available)."""
+    prompt = load_prompt("testing_prompt", project_dir)
+    return _append_knowledge(prompt, project_dir)
+
+
 def _append_knowledge(prompt: str, project_dir: Path | None) -> str:
     """Append knowledge file bundle to a prompt."""
     if not project_dir:

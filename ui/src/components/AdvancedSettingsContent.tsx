@@ -43,6 +43,11 @@ const DEFAULTS: AdvancedSettings = {
   controller_enabled: false,
   controller_model: '',
   controller_max_sessions: 0,
+  regression_pool_enabled: false,
+  regression_pool_max_agents: 1,
+  regression_pool_model: '',
+  regression_pool_min_interval_s: 600,
+  regression_pool_max_iterations: 1,
   planner_enabled: false,
   planner_model: '',
   planner_agents: 'codex,gemini',
@@ -134,6 +139,9 @@ export function AdvancedSettingsContent() {
       addError('qa_subagent_agents', 'QA provider order is required for multi_cli')
 
     if (draft.planner_enabled && !draft.planner_agents.trim()) addError('planner_agents', 'Planner agents are required when planner is enabled')
+
+    if (draft.regression_pool_enabled && draft.regression_pool_max_agents <= 0)
+      addError('regression_pool_max_agents', 'Regression pool max agents must be > 0 when enabled')
 
     if (draft.initializer_provider === 'multi_cli' && !draft.initializer_agents.trim())
       addError('initializer_agents', 'Initializer agents are required when provider is multi_cli')
@@ -484,6 +492,47 @@ export function AdvancedSettingsContent() {
                   </label>
                   <Field label="Controller max sessions" value={draft.controller_max_sessions} onChange={(v) => setDraft({ ...draft, controller_max_sessions: clampInt(v, 0, 50) })} />
                   <TextField label="Controller model" value={draft.controller_model} onChange={(v) => setDraft({ ...draft, controller_model: v })} placeholder="e.g. haiku" />
+                </div>
+              </div>
+
+              <div className="neo-card p-4">
+                <div className="font-display font-bold uppercase mb-3">Regression Pool</div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <label className="neo-card p-3 flex items-center justify-between cursor-pointer">
+                    <span className="font-display font-bold text-sm">Enable regression testers</span>
+                    <input
+                      type="checkbox"
+                      checked={draft.regression_pool_enabled}
+                      onChange={(e) => setDraft({ ...draft, regression_pool_enabled: e.target.checked })}
+                      className="w-5 h-5"
+                    />
+                  </label>
+                  <Field
+                    label="Max testers"
+                    value={draft.regression_pool_max_agents}
+                    onChange={(v) => setDraft({ ...draft, regression_pool_max_agents: clampInt(v, 0, 10) })}
+                    error={validation.fieldErrors.regression_pool_max_agents}
+                  />
+                  <Field
+                    label="Min interval (s)"
+                    value={draft.regression_pool_min_interval_s}
+                    onChange={(v) => setDraft({ ...draft, regression_pool_min_interval_s: clampInt(v, 30, 86400) })}
+                  />
+                  <Field
+                    label="Max iters"
+                    value={draft.regression_pool_max_iterations}
+                    onChange={(v) => setDraft({ ...draft, regression_pool_max_iterations: clampInt(v, 1, 5) })}
+                  />
+                  <TextField
+                    label="Model (optional)"
+                    value={draft.regression_pool_model}
+                    onChange={(v) => setDraft({ ...draft, regression_pool_model: v })}
+                    placeholder="e.g. sonnet"
+                  />
+                </div>
+                <div className="text-xs text-[var(--color-neo-text-secondary)] mt-2">
+                  Spawns short-lived Claude+Playwright testers when there are no claimable pending features. On failure,
+                  it creates a new <span className="font-mono">REGRESSION</span> feature linked to the original passing feature.
                 </div>
               </div>
 

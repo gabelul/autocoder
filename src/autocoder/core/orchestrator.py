@@ -377,6 +377,7 @@ class Orchestrator:
         port_status = self.port_allocator.get_status()
         self._last_logs_prune_at: Optional[datetime] = None
         self._last_dependency_check_at: Optional[datetime] = None
+        self._last_regression_spawn_at: Optional[datetime] = None
 
         # Apply model preset override (workers may pass 'custom' to use persisted available_models).
         self.model_preset = model_preset
@@ -673,6 +674,15 @@ class Orchestrator:
                         # Spawn more agents
                         self._spawn_agents(min(available_slots, claimable_now))
                     else:
+                        spawned_regressions = self._maybe_spawn_regression_agents(
+                            available_slots=int(available_slots),
+                            completed_count=int(stats["features"].get("completed", 0) or 0),
+                        )
+                        if spawned_regressions:
+                            idle_cycles = 0
+                            await asyncio.sleep(5)
+                            continue
+
                         # Avoid tight polling when there are pending features but none are currently claimable.
                         idle_cycles += 1
                         waiting_backoff = int((queue_state or {}).get("waiting_backoff") or 0)
@@ -1338,6 +1348,185 @@ class Orchestrator:
                 self.worktree_manager.delete_worktree(qa_agent_id, force=True)
             self.port_allocator.release_ports(qa_agent_id)
             return None
+
+    def _regression_pool_enabled(self) -> bool:
+        return self._env_truthy("AUTOCODER_REGRESSION_POOL_ENABLED")
+
+    def _regression_pool_max_agents(self) -> int:
+        raw = str(os.environ.get("AUTOCODER_REGRESSION_POOL_MAX_AGENTS", "")).strip()
+        try:
+            v = int(raw) if raw else 1
+        except Exception:
+            v = 1
+        return max(0, min(10, v))
+
+    def _regression_pool_min_interval_s(self) -> int:
+        raw = str(os.environ.get("AUTOCODER_REGRESSION_POOL_MIN_INTERVAL_S", "")).strip()
+        try:
+            v = int(raw) if raw else 600
+        except Exception:
+            v = 600
+        return max(30, min(24 * 60 * 60, v))
+
+    def _regression_pool_model(self) -> str:
+        raw = str(os.environ.get("AUTOCODER_REGRESSION_POOL_MODEL", "")).strip().lower()
+        if raw in self.available_models:
+            return raw
+        return "sonnet" if "sonnet" in self.available_models else (self.available_models[0] if self.available_models else "opus")
+
+    def _regression_pool_max_iterations(self) -> int:
+        raw = str(os.environ.get("AUTOCODER_REGRESSION_POOL_MAX_ITERATIONS", "")).strip()
+        try:
+            v = int(raw) if raw else 1
+        except Exception:
+            v = 1
+        return max(1, min(5, v))
+
+    def _count_active_regression_agents(self) -> int:
+        try:
+            agents = self.database.get_active_agents()
+        except Exception:
+            return 0
+        return sum(1 for a in agents if str(a.get("agent_id") or "").startswith("regression-"))
+
+    def _maybe_spawn_regression_agents(self, *, available_slots: int, completed_count: int) -> List[str]:
+        """
+        Opportunistically spawn regression testers when there is spare capacity.
+
+        Default behavior is conservative: only runs when enabled and when the project has at least
+        one passing feature to test.
+        """
+        if not self._regression_pool_enabled():
+            return []
+        if available_slots <= 0:
+            return []
+        max_agents = self._regression_pool_max_agents()
+        if max_agents <= 0:
+            return []
+        if int(completed_count or 0) <= 0:
+            return []
+
+        now = datetime.now()
+        min_interval = timedelta(seconds=self._regression_pool_min_interval_s())
+        if self._last_regression_spawn_at and (now - self._last_regression_spawn_at) < min_interval:
+            return []
+
+        active_regressions = self._count_active_regression_agents()
+        remaining = max(0, max_agents - active_regressions)
+        if remaining <= 0:
+            return []
+
+        to_spawn = min(int(available_slots), remaining)
+        spawned = self._spawn_regression_agents(to_spawn)
+        if spawned:
+            self._last_regression_spawn_at = now
+        return spawned
+
+    def _spawn_regression_agents(self, count: int) -> List[str]:
+        """
+        Spawn regression tester agents (Claude+Playwright) that do NOT participate in Gatekeeper merges.
+
+        These agents run a dedicated testing prompt and, on regressions, create "issue-like" regression
+        features via MCP (`feature_report_regression`).
+        """
+        if count <= 0:
+            return []
+
+        spawned: list[str] = []
+        model = self._regression_pool_model()
+        max_iterations = self._regression_pool_max_iterations()
+
+        stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        agent_id_prefix = f"regression-{stamp}"
+
+        logger.info(f"🧪 Spawning {count} regression tester(s)...")
+
+        for i in range(count):
+            agent_id = f"{agent_id_prefix}-{i}"
+
+            port_pair = self.port_allocator.allocate_ports(agent_id)
+            if not port_pair:
+                logger.error(f"   ❌ Failed to allocate ports for {agent_id} (regression tester)")
+                continue
+            api_port, web_port = port_pair
+
+            try:
+                branch = f"regression/{stamp}-{i}"
+                worktree_info = self.worktree_manager.create_worktree(
+                    agent_id=agent_id,
+                    feature_id=0,
+                    feature_name="regression",
+                    branch_name=branch,
+                )
+            except Exception as e:
+                logger.error(f"   ❌ Failed to create regression worktree for {agent_id}: {e}")
+                self.port_allocator.release_ports(agent_id)
+                continue
+
+            worker_script = Path(__file__).parent.parent / "regression_worker.py"
+            cmd = [
+                sys.executable,
+                str(worker_script),
+                "--project-dir",
+                str(self.project_dir),
+                "--agent-id",
+                agent_id,
+                "--worktree-path",
+                worktree_info["worktree_path"],
+                "--model",
+                model,
+                "--max-iterations",
+                str(max_iterations),
+                "--api-port",
+                str(api_port),
+                "--web-port",
+                str(web_port),
+            ]
+
+            env = os.environ.copy()
+            env["AUTOCODER_API_PORT"] = str(api_port)
+            env["AUTOCODER_WEB_PORT"] = str(web_port)
+            env["API_PORT"] = str(api_port)
+            env["WEB_PORT"] = str(web_port)
+            env["PORT"] = str(api_port)
+            env["VITE_PORT"] = str(web_port)
+            env.setdefault("AUTOCODER_AGENT_ID", str(agent_id))
+
+            logs_dir = (self.project_dir / ".autocoder" / "logs")
+            logs_dir.mkdir(parents=True, exist_ok=True)
+            log_file_path = logs_dir / f"{agent_id}.log"
+
+            logger.info(f"🧪 Launching regression tester {agent_id}:")
+            logger.info(f"   Model: {model.upper()}")
+            logger.info(f"   Worktree: {worktree_info['worktree_path']}")
+            logger.info(f"   Ports: API={api_port}, WEB={web_port}")
+            logger.info(f"   Logs: {log_file_path}")
+
+            try:
+                log_handle = open(log_file_path, "w", encoding="utf-8", errors="replace")
+                process = subprocess.Popen(cmd, stdout=log_handle, stderr=log_handle, env=env)
+                with contextlib.suppress(Exception):
+                    log_handle.close()
+
+                pid = process.pid
+                self.database.register_agent(
+                    agent_id=agent_id,
+                    worktree_path=worktree_info["worktree_path"],
+                    feature_id=None,
+                    pid=pid,
+                    api_port=api_port,
+                    web_port=web_port,
+                    log_file_path=str(log_file_path),
+                )
+                spawned.append(agent_id)
+            except Exception as e:
+                logger.error(f"   ❌ Failed to spawn regression tester process: {e}")
+                with contextlib.suppress(Exception):
+                    self.worktree_manager.delete_worktree(agent_id, force=True)
+                self.port_allocator.release_ports(agent_id)
+                continue
+
+        return spawned
 
     def _detect_main_branch(self) -> str:
         env_branch = os.environ.get("AUTOCODER_MAIN_BRANCH")

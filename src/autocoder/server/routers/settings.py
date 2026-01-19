@@ -61,6 +61,12 @@ class AdvancedSettingsModel(BaseModel):
     controller_model: str = Field(default="", max_length=128)
     controller_max_sessions: int = Field(default=0, ge=0, le=50)
 
+    regression_pool_enabled: bool = False
+    regression_pool_max_agents: int = Field(default=1, ge=0, le=10)
+    regression_pool_model: str = Field(default="", max_length=128)
+    regression_pool_min_interval_s: int = Field(default=600, ge=30, le=86400)
+    regression_pool_max_iterations: int = Field(default=1, ge=1, le=5)
+
     planner_enabled: bool = False
     planner_model: str = Field(default="", max_length=128)
     planner_agents: str = Field(default="codex,gemini", max_length=256)
@@ -134,6 +140,9 @@ class AdvancedSettingsModel(BaseModel):
         # Planner conditionals
         if self.planner_enabled and not (self.planner_agents or "").strip():
             raise ValueError("planner_agents is required when planner_enabled=true")
+
+        if self.regression_pool_enabled and self.regression_pool_max_agents <= 0:
+            raise ValueError("regression_pool_max_agents must be > 0 when regression_pool_enabled=true")
 
         # Initializer conditionals
         if self.initializer_provider == "multi_cli" and not (self.initializer_agents or "").strip():

@@ -239,6 +239,12 @@ export interface AdvancedSettings {
   controller_model: string
   controller_max_sessions: number
 
+  regression_pool_enabled: boolean
+  regression_pool_max_agents: number
+  regression_pool_model: string
+  regression_pool_min_interval_s: number
+  regression_pool_max_iterations: number
+
   planner_enabled: boolean
   planner_model: string
   planner_agents: string

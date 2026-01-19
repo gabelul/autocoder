@@ -41,6 +41,7 @@ from .prompts import (
     get_initializer_prompt,
     get_coding_prompt,
     get_coding_prompt_yolo,
+    get_testing_prompt,
     copy_spec_to_project,
     has_project_prompts,
 )
@@ -371,8 +372,10 @@ async def run_autonomous_agent(
             prompt = get_initializer_prompt(project_dir)
             is_first_run = False  # Only use initializer once
         else:
-            # Use YOLO prompt if in YOLO mode
-            if yolo_mode:
+            agent_mode = str(os.environ.get("AUTOCODER_AGENT_MODE", "")).strip().lower()
+            if agent_mode in {"testing", "regression"}:
+                prompt = get_testing_prompt(project_dir)
+            elif yolo_mode:
                 prompt = get_coding_prompt_yolo(project_dir)
             else:
                 prompt = get_coding_prompt(project_dir)
