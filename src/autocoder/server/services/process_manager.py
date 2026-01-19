@@ -13,6 +13,7 @@ import subprocess
 import sys
 import threading
 import os
+import contextlib
 from datetime import datetime
 from pathlib import Path
 from typing import Literal, Callable, Awaitable, Set
@@ -177,46 +178,153 @@ class AgentProcessManager:
     def pid(self) -> int | None:
         return self.process.pid if self.process else None
 
+    def _parse_lock_content(self, raw: str) -> tuple[int, float | None]:
+        """
+        Parse lock file content.
+
+        Current format: `PID:CREATE_TIME` (CREATE_TIME is psutil create_time float).
+        Legacy format: `PID`.
+        """
+        raw = (raw or "").strip()
+        if not raw:
+            raise ValueError("empty lock file")
+        if ":" in raw:
+            pid_str, create_time_str = raw.split(":", 1)
+            pid = int(pid_str.strip())
+            create_time = float(create_time_str.strip())
+            return pid, create_time
+        return int(raw), None
+
     def _check_lock(self) -> bool:
         """Check if another agent is already running for this project."""
         if not self.lock_file.exists():
             return True
 
         try:
-            pid = int(self.lock_file.read_text().strip())
-            if psutil.pid_exists(pid):
-                # Check if it's actually our agent process
-                try:
-                    proc = psutil.Process(pid)
-                    cmdline = " ".join(proc.cmdline())
-                    cmdline_l = cmdline.lower()
-                    project_l = str(self.project_dir.resolve()).lower()
-
-                    # Legacy entry points (older versions)
-                    if "autonomous_agent_demo.py" in cmdline_l or "orchestrator_demo.py" in cmdline_l:
-                        return False
-
-                    # Current entry point: `python -m autocoder.cli ...`
-                    if "autocoder.cli" in cmdline_l and project_l in cmdline_l:
-                        return False
-                except (psutil.NoSuchProcess, psutil.AccessDenied):
-                    pass
-            # Stale lock file
-            self.lock_file.unlink(missing_ok=True)
-            return True
+            pid, stored_create_time = self._parse_lock_content(self.lock_file.read_text())
         except (ValueError, OSError):
             self.lock_file.unlink(missing_ok=True)
             return True
 
-    def _create_lock(self) -> None:
-        """Create lock file with current process PID."""
+        if not psutil.pid_exists(pid):
+            self.lock_file.unlink(missing_ok=True)
+            return True
+
+        try:
+            proc = psutil.Process(pid)
+        except psutil.NoSuchProcess:
+            self.lock_file.unlink(missing_ok=True)
+            return True
+        except psutil.AccessDenied:
+            # If we can't inspect the process, be conservative and assume it's running.
+            return False
+
+        if stored_create_time is not None:
+            # PID reuse protection: ensure the process is the same instance.
+            # (create_time is stable for the lifetime of the process)
+            try:
+                if abs(proc.create_time() - stored_create_time) > 1.0:
+                    self.lock_file.unlink(missing_ok=True)
+                    return True
+            except Exception:
+                # If we can't validate create_time, assume the lock is valid.
+                return False
+
+            # Same PID + same create_time => same process instance. Lock is valid.
+            return False
+
+        # Legacy lock format: PID only. Best-effort verify it's our agent.
+        try:
+            cmdline = " ".join(proc.cmdline())
+        except psutil.AccessDenied:
+            return False
+
+        cmdline_l = cmdline.lower()
+        project_l = str(self.project_dir.resolve()).lower()
+
+        # Legacy entry points (older versions)
+        if "autonomous_agent_demo.py" in cmdline_l or "orchestrator_demo.py" in cmdline_l:
+            return False
+
+        # Current entry point: `python -m autocoder.cli ...`
+        if "autocoder.cli" in cmdline_l and project_l in cmdline_l:
+            return False
+
+        # Unknown process; treat lock as stale.
+        self.lock_file.unlink(missing_ok=True)
+        return True
+
+    def _create_lock(self) -> bool:
+        """
+        Atomically create lock file with current process PID and creation time.
+
+        Returns:
+            True if lock was created successfully, False if lock already exists.
+        """
         self.lock_file.parent.mkdir(parents=True, exist_ok=True)
-        if self.process:
-            self.lock_file.write_text(str(self.process.pid))
+        if not self.process:
+            return False
+
+        try:
+            create_time: float | None = psutil.Process(self.process.pid).create_time()
+        except Exception:
+            create_time = None
+
+        lock_content = (
+            f"{self.process.pid}:{create_time}" if create_time is not None else str(self.process.pid)
+        )
+
+        try:
+            fd = os.open(str(self.lock_file), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            try:
+                os.write(fd, lock_content.encode())
+            finally:
+                os.close(fd)
+            return True
+        except FileExistsError:
+            return False
+        except Exception as e:
+            logger.warning(f"Failed to create lock file: {e}")
+            return False
 
     def _remove_lock(self) -> None:
         """Remove lock file."""
         self.lock_file.unlink(missing_ok=True)
+
+    def _kill_process_tree(self, pid: int, *, expected_create_time: float | None = None) -> None:
+        """Best-effort terminate/kill process and all children (cross-platform)."""
+        try:
+            parent = psutil.Process(pid)
+        except psutil.NoSuchProcess:
+            return
+
+        if expected_create_time is not None:
+            try:
+                if abs(parent.create_time() - expected_create_time) > 1.0:
+                    return
+            except Exception:
+                return
+
+        with contextlib.suppress(Exception):
+            children = parent.children(recursive=True)
+        procs = []
+        with contextlib.suppress(Exception):
+            procs = children + [parent]
+
+        for p in procs:
+            with contextlib.suppress(Exception):
+                p.terminate()
+
+        with contextlib.suppress(Exception):
+            psutil.wait_procs(procs, timeout=3.0)
+
+        for p in procs:
+            with contextlib.suppress(Exception):
+                if p.is_running():
+                    p.kill()
+
+        with contextlib.suppress(Exception):
+            psutil.wait_procs(procs, timeout=3.0)
 
     async def _broadcast_output(self, line: str) -> None:
         """Broadcast output line to all registered callbacks."""
@@ -356,7 +464,25 @@ class AgentProcessManager:
                 env=env,
             )
 
-            self._create_lock()
+            expected_create_time: float | None = None
+            with contextlib.suppress(Exception):
+                expected_create_time = psutil.Process(self.process.pid).create_time()
+
+            if not self._create_lock():
+                # Another instance won the race; don't leave a stray process running.
+                lock_exists = self.lock_file.exists()
+                self._kill_process_tree(self.process.pid, expected_create_time=expected_create_time)
+                with contextlib.suppress(Exception):
+                    self.process.wait(timeout=3.0)
+
+                self.process = None
+                self.started_at = None
+                self.status = "stopped"
+
+                if lock_exists:
+                    return False, "Another agent instance is already running for this project"
+                return False, "Failed to create project lock file (.agent.lock)"
+
             self.started_at = datetime.now()
             self.status = "running"
 
@@ -387,20 +513,27 @@ class AgentProcessManager:
                 except asyncio.CancelledError:
                     pass
 
-            # Terminate gracefully first
-            self.process.terminate()
+            pid = self.process.pid
+            expected_create_time: float | None = None
+            if self.lock_file.exists():
+                with contextlib.suppress(Exception):
+                    _, expected_create_time = self._parse_lock_content(
+                        self.lock_file.read_text(encoding="utf-8")
+                    )
 
-            # Wait up to 5 seconds for graceful shutdown
+            if expected_create_time is None:
+                with contextlib.suppress(Exception):
+                    expected_create_time = psutil.Process(pid).create_time()
+
+            self._kill_process_tree(pid, expected_create_time=expected_create_time)
+
+            # Wait a bit for the parent process handle to settle.
             loop = asyncio.get_running_loop()
-            try:
+            with contextlib.suppress(Exception):
                 await asyncio.wait_for(
                     loop.run_in_executor(None, self.process.wait),
-                    timeout=5.0
+                    timeout=5.0,
                 )
-            except asyncio.TimeoutError:
-                # Force kill if still running
-                self.process.kill()
-                await loop.run_in_executor(None, self.process.wait)
 
             self._remove_lock()
             self.status = "stopped"

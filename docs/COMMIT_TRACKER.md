@@ -19,6 +19,7 @@ git log --oneline master..upstream/master   # what upstream has that we don't
 | `76e6521` | Dependency graph blank fix | **N/A** | We don’t ship dependency graph UI in this fork. |
 | `5f78607` | SQLAlchemy session cache fix in parallel orchestrator | **N/A** | We don’t use SQLAlchemy; our DB layer is raw SQLite with explicit retry/backoff. |
 | `1312836` | Dedicated testing agents + testing ratio + MCP mark‑failing | **Partial overlap** | We already run tests in Gatekeeper + spawn QA fixers on failure (configurable provider). Consider optional **parallel QA ratio** later if we want proactive test agents. |
+| `126151d` | “Production readiness”: locks + PID reuse + WAL safety + Windows cleanup | **Ported (selectively)** | Ported atomic `<project>/.agent.lock` (`PID:CREATE_TIME`) + PID reuse protection + process‑tree stop; added SQLite journal mode fallback for network drives (`AUTOCODER_SQLITE_JOURNAL_MODE` override). |
 
 ## Rules of thumb
 - If an upstream change depends on `parallel_orchestrator.py` + dependency graph, treat as a **separate track** unless we decide to migrate architectures.

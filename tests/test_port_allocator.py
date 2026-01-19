@@ -11,19 +11,22 @@ def _bind_ephemeral() -> tuple[socket.socket, int]:
 
 def test_port_allocator_skips_ports_in_use():
     # Reserve an ephemeral port and keep it bound to simulate a conflicting external process.
-    for _ in range(10):
+    # Windows ephemeral port ranges can include very high ports; keep enough headroom for +25.
+    max_start = 65510
+
+    for _ in range(50):
         occupied_socket, occupied_port = _bind_ephemeral()
-        if occupied_port < 65000:
+        if occupied_port <= max_start:
             break
         occupied_socket.close()
     else:
         raise AssertionError("Could not acquire a safe ephemeral port for testing")
 
     # Choose small ranges around ephemeral ports to minimize the chance of collisions.
-    for _ in range(10):
+    for _ in range(50):
         web_socket, web_start = _bind_ephemeral()
         web_socket.close()
-        if web_start < 65000:
+        if web_start <= max_start:
             break
     else:
         occupied_socket.close()

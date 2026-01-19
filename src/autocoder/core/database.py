@@ -25,6 +25,8 @@ import time
 
 logger = logging.getLogger(__name__)
 
+_VALID_JOURNAL_MODES = {"WAL", "DELETE", "TRUNCATE", "PERSIST", "MEMORY", "OFF"}
+
 
 class Database:
     """
@@ -41,8 +43,96 @@ class Database:
             db_path: Path to SQLite database file
         """
         self.db_path = Path(db_path).resolve()
+        self._journal_mode = self._determine_journal_mode()
         self._init_schema()
         logger.info(f"Database initialized: {self.db_path}")
+
+    def _is_network_filesystem(self, path: Path) -> bool:
+        """Best-effort detection for network drives where WAL can be unsafe."""
+        try:
+            if os.name == "nt":
+                drive = path.drive or ""
+                if drive.startswith("\\\\"):
+                    return True
+                if not drive:
+                    return False
+
+                root = f"{drive}\\"
+                try:
+                    import ctypes
+                    from ctypes import wintypes
+
+                    get_drive_type = ctypes.windll.kernel32.GetDriveTypeW
+                    get_drive_type.argtypes = [wintypes.LPCWSTR]
+                    get_drive_type.restype = wintypes.UINT
+                    # https://learn.microsoft.com/windows/win32/api/fileapi/nf-fileapi-getdrivetypew
+                    DRIVE_REMOTE = 4
+                    return int(get_drive_type(root)) == DRIVE_REMOTE
+                except Exception:
+                    return False
+
+            mounts = Path("/proc/mounts")
+            if not mounts.exists():
+                return False
+
+            try:
+                path_str = str(path.resolve())
+            except Exception:
+                path_str = str(path)
+
+            best_mount_point = ""
+            best_fstype = ""
+            for line in mounts.read_text(encoding="utf-8", errors="ignore").splitlines():
+                parts = line.split()
+                if len(parts) < 3:
+                    continue
+                mount_point = parts[1].replace("\\040", " ")
+                fstype = parts[2]
+                if path_str.startswith(mount_point) and len(mount_point) > len(best_mount_point):
+                    best_mount_point = mount_point
+                    best_fstype = fstype
+
+            if not best_fstype:
+                return False
+
+            return best_fstype.lower() in {
+                "cifs",
+                "smbfs",
+                "nfs",
+                "nfs4",
+                "sshfs",
+                "fuse.sshfs",
+            }
+        except Exception:
+            return False
+
+    def _determine_journal_mode(self) -> str:
+        """
+        Decide SQLite journal_mode.
+
+        Default is WAL for multi-process concurrency.
+        On network drives, WAL can be unsafe; fall back to DELETE.
+        Override with `AUTOCODER_SQLITE_JOURNAL_MODE`.
+        """
+        env_mode = os.getenv("AUTOCODER_SQLITE_JOURNAL_MODE")
+        if env_mode:
+            mode = env_mode.strip().upper()
+            if mode in _VALID_JOURNAL_MODES:
+                return mode
+            logger.warning(
+                "Ignoring invalid AUTOCODER_SQLITE_JOURNAL_MODE=%r (valid: %s)",
+                env_mode,
+                ", ".join(sorted(_VALID_JOURNAL_MODES)),
+            )
+
+        if self._is_network_filesystem(self.db_path):
+            logger.warning(
+                "Database is on a network filesystem; using journal_mode=DELETE (WAL can be unsafe): %s",
+                self.db_path,
+            )
+            return "DELETE"
+
+        return "WAL"
 
     @contextmanager
     def get_connection(self):
@@ -51,7 +141,7 @@ class Database:
         conn.row_factory = sqlite3.Row
         try:
             conn.execute("PRAGMA foreign_keys = ON")
-            conn.execute("PRAGMA journal_mode = WAL")
+            conn.execute(f"PRAGMA journal_mode = {self._journal_mode}")
             conn.execute("PRAGMA synchronous = NORMAL")
             conn.execute("PRAGMA busy_timeout = 10000")
         except sqlite3.OperationalError:
@@ -70,7 +160,7 @@ class Database:
             # Pragmas for better concurrency under multiple processes.
             # (Safe to run repeatedly; journal_mode is persistent for the DB file.)
             try:
-                cursor.execute("PRAGMA journal_mode = WAL")
+                cursor.execute(f"PRAGMA journal_mode = {self._journal_mode}")
                 cursor.execute("PRAGMA synchronous = NORMAL")
                 cursor.execute("PRAGMA busy_timeout = 10000")
                 cursor.execute("PRAGMA foreign_keys = ON")

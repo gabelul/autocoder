@@ -108,6 +108,30 @@ On Windows, `node_modules` can be locked (WinError 5) and prevent deleting workt
 
 Failed deletions are queued and retried later so `worktrees/` doesn’t grow unbounded.
 
+## Project run lock (Web UI start/stop)
+
+When starting an agent from the Web UI, AutoCoder enforces a **single run per project directory** using a lock file:
+
+- Lock file: `<project>/.agent.lock`
+- Format: `PID:CREATE_TIME` (or legacy `PID`)
+- Created **atomically** (`O_CREAT|O_EXCL`) to avoid race conditions
+- Includes **PID reuse protection** via `psutil.Process(pid).create_time()`
+
+If a second UI session tries to start the same project, it fails fast instead of spawning a “ghost” process.
+Stopping a run kills the **full process tree** (parent + children) to avoid orphaned `node`/`npm` processes on Windows.
+
+## SQLite journal mode safety (WAL vs network drives)
+
+AutoCoder uses `journal_mode=WAL` by default because the orchestrator is multi-process and needs decent concurrency.
+
+On network filesystems (SMB/NFS/etc), WAL can be unsafe. AutoCoder detects that case and falls back to:
+
+- `journal_mode=DELETE`
+
+You can override explicitly:
+
+- `AUTOCODER_SQLITE_JOURNAL_MODE=WAL|DELETE|TRUNCATE|PERSIST|MEMORY|OFF`
+
 ## Log & artifact retention (storage hygiene)
 
 Worker logs live at:
