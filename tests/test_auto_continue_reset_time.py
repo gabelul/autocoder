@@ -17,3 +17,13 @@ def test_auto_continue_delay_parses_reset_time_when_available():
     else:
         assert "UTC" in target
 
+
+def test_auto_continue_delay_parses_when_limit_reached_not_at_start():
+    delay, target = _auto_continue_delay_from_rate_limit("Oops. Limit reached. Resets at 1pm (UTC)")
+    assert delay >= 0.0
+    assert delay <= 24 * 60 * 60
+    if target is None:
+        assert delay == float(AUTO_CONTINUE_DELAY_SECONDS)
+    else:
+        assert "UTC" in target
+

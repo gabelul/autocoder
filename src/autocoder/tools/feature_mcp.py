@@ -31,7 +31,7 @@ from pathlib import Path
 from typing import Annotated
 
 from mcp.server.fastmcp import FastMCP
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 # Use the UNIFIED database (shared with Orchestrator)
 from autocoder.core.database import get_database
@@ -78,6 +78,8 @@ class FeatureCreateItem(BaseModel):
     name: str = Field(..., min_length=1, max_length=255, description="Feature name")
     description: str = Field(..., min_length=1, description="Detailed description")
     steps: list[str] = Field(..., min_length=1, description="Implementation/test steps")
+    priority: int = Field(default=0, ge=0, description="Priority (lower = higher priority)")
+    enabled: bool = Field(default=True, description="Whether this feature is enabled for claiming")
 
 
 class BulkCreateInput(BaseModel):
@@ -390,7 +392,19 @@ def feature_create_bulk(features: list[dict]) -> str:
         JSON with number of features created
     """
     db = get_db()
-    count = db.create_features_bulk(features)
+    try:
+        validated = BulkCreateInput(features=features)
+    except ValidationError as e:
+        return json.dumps(
+            {
+                "success": False,
+                "error": "Invalid feature_create_bulk input",
+                "details": e.errors(),
+            },
+            indent=2,
+        )
+
+    count = db.create_features_bulk([f.model_dump() for f in validated.features])
 
     result = {
         "success": True,

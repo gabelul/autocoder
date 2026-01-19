@@ -69,15 +69,14 @@ def _auto_continue_delay_from_rate_limit(response: str) -> tuple[float, str | No
     """
     if not response:
         return float(AUTO_CONTINUE_DELAY_SECONDS), None
-    if not response.lower().strip().startswith("limit reached"):
+    if "limit reached" not in response.lower():
         return float(AUTO_CONTINUE_DELAY_SECONDS), None
     if ZoneInfo is None:
         return float(AUTO_CONTINUE_DELAY_SECONDS), None
 
     match = re.search(
-        r"resets\s+(\d+)(?::(\d+))?\s*(am|pm)\s*\(([^)]+)\)",
+        r"(?i)\bresets(?:\s+at)?\s+(\d+)(?::(\d+))?\s*(am|pm)\s*\(([^)]+)\)",
         response,
-        flags=re.IGNORECASE,
     )
     if not match:
         return float(AUTO_CONTINUE_DELAY_SECONDS), None
@@ -99,6 +98,7 @@ def _auto_continue_delay_from_rate_limit(response: str) -> tuple[float, str | No
         if target <= now:
             target += timedelta(days=1)
         delay = max(0.0, (target - now).total_seconds())
+        delay = min(delay, 24 * 60 * 60)
         return delay, target.strftime("%B %d, %Y at %I:%M %p %Z")
     except Exception:
         return float(AUTO_CONTINUE_DELAY_SECONDS), None
@@ -457,11 +457,19 @@ async def run_autonomous_agent(
 
         # Handle status
         if status == "continue":
+            limit_reached = bool(response) and "limit reached" in response.lower()
             delay_s, target = _auto_continue_delay_from_rate_limit(response)
+            if limit_reached:
+                print("Claude Agent SDK indicated limit reached.", flush=True)
             if target:
-                print(f"\nAgent will auto-continue in {delay_s:.0f}s ({target})...", flush=True)
+                prefix = "Claude Code Limit Reached. " if limit_reached else ""
+                print(
+                    f"\n{prefix}Agent will auto-continue in {delay_s:.0f}s ({target})...",
+                    flush=True,
+                )
             else:
-                print(f"\nAgent will auto-continue in {delay_s:.0f}s...", flush=True)
+                prefix = "Claude Code Limit Reached. " if limit_reached else ""
+                print(f"\n{prefix}Agent will auto-continue in {delay_s:.0f}s...", flush=True)
             print_progress_summary(features_state_dir)
             sys.stdout.flush()
             await asyncio.sleep(delay_s)

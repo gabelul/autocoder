@@ -85,12 +85,12 @@ Legend:
 | `cbe3ecd` | resolve CI linting errors (Python + ESLint) | **Skipped** | We don’t enforce ruff/eslint in CI yet (ruff currently fails on legacy/dev files). |
 | `dff28c5` | cross-platform venv compatibility in WSL | **Skipped** | Our preferred flow is `pip install -e '.[dev]'` + entrypoints; scripts still activate `.venv` when present. |
 | `cdcbd11` | second-round code review fixes (expand session locks + ws reconnection) | **Already have** | Our expand session uses `asyncio.Lock`, temp settings files, safer ws reconnect handling. |
-| `9c07dd7` | coderabbit fixes: more flexible limit parsing + clamp delays | **Planned** | We already parse reset times; upstream regex + 24h clamp is worth porting. |
-| `2b2e28a` | improve “limit reached” UI message context | **Planned** | Pure UX polish for rate-limit auto-continue messaging. |
+| `9c07dd7` | coderabbit fixes: more flexible limit parsing + clamp delays | **Ported** | Match `limit reached` anywhere in the response, accept `resets at …`, clamp delay to 24h. |
+| `2b2e28a` | improve “limit reached” UI message context | **Ported** | Clearer log line: “Claude Code Limit Reached…” for easier debugging + UI log scanning. |
 | `75f2bf2` | code review fixes for expand-project (security + idempotent start) | **Already have** | Our expand flow avoids leaking exception details and is idempotent/reconnect-safe. |
 | `5f06dcf` | Expand Project for bulk AI-powered feature creation | **Already have** | Expand modal/chat + feature bulk creation exists here. |
 | `7f436a4` | reset time parsing for auto-continue | **Already have** | Auto-continue waits until reset time (plus we added timezone handling). |
-| `118f393` | validation constraints to feature_create tool | **Planned** | Worth porting: basic min/max validation for bulk feature creation inputs. |
+| `118f393` | validation constraints to feature_create tool | **Ported** | `feature_create_bulk` now validates input via Pydantic constraints before writing to DB. |
 | `398c9d4` | assistant chat to create/manage features | **Already have** | Assistant can create/update/delete features via MCP tools. |
 | `a195d6d` | YOLO mode effects | **Already have** | YOLO toggle + styling exists; exact visual treatment differs (intent preserved). |
 | `b2c19b0` | auth error handling to UI flow | **Already have** | Auth errors detected + hint printed into logs. |
