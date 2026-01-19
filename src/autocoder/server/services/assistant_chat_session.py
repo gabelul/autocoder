@@ -356,6 +356,10 @@ class AssistantChatSession:
             json.dump(security_settings, f, indent=2)
 
         # Build MCP servers config - features and Playwright
+        playwright_args = ["@playwright/mcp@latest", "--viewport-size", "1280x720"]
+        isolated_raw = os.environ.get("AUTOCODER_PLAYWRIGHT_ISOLATED", "")
+        if isolated_raw.strip().lower() not in {"0", "false", "no", "off"}:
+            playwright_args.append("--isolated")
         mcp_servers = {
             "features": {
                 "command": sys.executable,
@@ -370,7 +374,7 @@ class AssistantChatSession:
             },
             "playwright": {
                 "command": "npx",
-                "args": ["@playwright/mcp@latest", "--viewport-size", "1280x720"],
+                "args": playwright_args,
                 "env": {
                     **os.environ,
                     "AUTOCODER_API_PORT": str(get_api_port()),

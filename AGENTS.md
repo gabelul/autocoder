@@ -39,6 +39,7 @@ AutoCoder is a Claude Agent SDK + MCP based coding agent. It supports single-age
  - Feature implementation worker is configurable: `AUTOCODER_WORKER_PROVIDER=claude|codex_cli|gemini_cli|multi_cli` (patch workers use `src/autocoder/qa_worker.py --mode implement`).
 - Large backlogs may be **staged** (disabled) to keep active queues manageable; staged features can be enqueued from the UI or via `POST /features/enqueue`.
 - Agents stop when the queue is empty by default; set `AUTOCODER_STOP_WHEN_DONE=0` to keep them alive for new features.
+- Playwright MCP runs with `--isolated` by default to avoid cross-agent browser conflicts; set `AUTOCODER_PLAYWRIGHT_ISOLATED=0` to disable.
 - Skipping is for **external blockers only**; refactor/cleanup features are required work and should not be skipped. If a refactor feature conflicts with the original spec, the feature DB is the source of truth.
 - Web UI start/stop uses `<project>/.agent.lock` (atomic `PID:CREATE_TIME`) and kills the full process tree to avoid orphaned processes on Windows.
 - SQLite uses `journal_mode=WAL` by default; on network drives it falls back to `DELETE` (override with `AUTOCODER_SQLITE_JOURNAL_MODE`).

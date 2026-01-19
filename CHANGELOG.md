@@ -24,6 +24,7 @@ All notable changes to this fork will be listed here.
 - Agent auto-continue: improved “limit reached” parsing (resets-at variants) + 24h clamp
 - MCP `feature_create_bulk`: validate inputs before writing to DB
 - Worker logs: copy tail to clipboard
+- Playwright MCP now runs with `--isolated` by default (disable with `AUTOCODER_PLAYWRIGHT_ISOLATED=0`)
 - Fix: Gatekeeper verify-branch sanitization is Python 3.10 compatible
 - Fix: `test_mcp` includes missing `json` import
 

@@ -238,9 +238,14 @@ def create_client(
         }
     if not yolo_mode:
         # Include Playwright MCP server for browser automation (standard mode only)
+        playwright_args = ["@playwright/mcp@latest", "--viewport-size", "1280x720"]
+        # Default on: keep browser profile in memory (prevents cross-agent tab/profile conflicts).
+        isolated_raw = os.environ.get("AUTOCODER_PLAYWRIGHT_ISOLATED", "")
+        if isolated_raw.strip().lower() not in {"0", "false", "no", "off"}:
+            playwright_args.append("--isolated")
         mcp_servers["playwright"] = {
             "command": "npx",
-            "args": ["@playwright/mcp@latest", "--viewport-size", "1280x720"],
+            "args": playwright_args,
             "env": {
                 **os.environ,
                 "AUTOCODER_API_PORT": str(get_api_port()),

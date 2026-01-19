@@ -14,7 +14,7 @@ git log --oneline master..upstream/master   # what upstream has that we don't
 
 | Commit | Summary | Status in this fork | Notes / Action |
 | --- | --- | --- | --- |
-| `85f6940` | Parallel orchestration + dependency graph UI + agent mission control | **Not ported** | Different architecture (worktree-based orchestrator). We already have dynamic ports, QA sub-agent, gatekeeper artifacts. Dependency graph UI is nice but requires upstream feature graph + parallel orchestrator. |
+| `85f6940` | Parallel orchestration + dependency graph UI + agent mission control | **Partially ported** | We’re not adopting upstream’s dependency-graph orchestrator, but we *did* port the Playwright MCP `--isolated` behavior to reduce cross-agent browser conflicts. |
 | `bf3a6b0` | Per‑agent log viewer + stuck agent fixes + scheduling score | **Ported (adapted)** | Added per‑agent log jump + activity mini‑list, copy-to-clipboard for tails, and guarded the SDK client context manager to prevent “stuck” crash states. Scheduling score not applicable (we already prioritize blockers). |
 | `76e6521` | Dependency graph blank fix | **N/A** | We don’t ship dependency graph UI in this fork. |
 | `5f78607` | SQLAlchemy session cache fix in parallel orchestrator | **N/A** | We don’t use SQLAlchemy; our DB layer is raw SQLite with explicit retry/backoff. |
@@ -48,7 +48,7 @@ Legend:
 | `92450a0` | graph refresh issue | **Skipped** | Dependency graph UI not shipped in this fork. |
 | `76e6521` | prevent dependency graph from going blank during agent activity | **Skipped** | Dependency graph UI not shipped in this fork. |
 | `bf3a6b0` | per-agent logging UI + stuck agent fixes + scheduling score | **Ported** | Added per-agent log jump + activity mini-list + copy tail; guard SDK client context errors to avoid stuck/crash UI states. |
-| `85f6940` | concurrent agents with dependency system + “mission control” UI | **Skipped** | Architecture mismatch (upstream parallel orchestrator + dependency graph). Ideas noted in `dev_notes/UPSTREAM_PARITY.md`. |
+| `85f6940` | concurrent agents with dependency system + “mission control” UI | **Skipped** | Architecture mismatch (upstream parallel orchestrator + dependency graph). We still ported one high-signal idea: Playwright MCP `--isolated` by default (toggle via `AUTOCODER_PLAYWRIGHT_ISOLATED=0`). |
 | `91cc00a` | add explicit in_progress=False to all feature creation paths | **Skipped** | Our DB uses `status` + `review_status` (not `in_progress` boolean). |
 | `ab51bb6` | Merge PR #53 (null booleans resilience) | **Skipped** | Merge commit only. |
 | `2757ca3` | Merge PR #57 (GSD integration) | **Skipped** | Merge commit only. |

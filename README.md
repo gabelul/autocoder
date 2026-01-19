@@ -150,6 +150,7 @@ autocoder-ui
 - Scheduled runs: use the **Settings** modal (press `S`) to schedule a start time; schedules persist across UI restarts.
 - Stop-when-done: default is **stop** when the queue is empty; set `AUTOCODER_STOP_WHEN_DONE=0` to keep the agent alive for new features.
 - LAN access: set `AUTOCODER_UI_HOST=0.0.0.0` and `AUTOCODER_UI_ALLOW_REMOTE=1` (restart required).
+- Playwright MCP runs with an isolated in-memory profile by default (set `AUTOCODER_PLAYWRIGHT_ISOLATED=0` to disable).
 
 ### Project Setup & Reset (Web UI)
 
