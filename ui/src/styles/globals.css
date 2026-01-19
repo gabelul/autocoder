@@ -88,12 +88,12 @@
   /* -------------------------------------------------------------------------
      Shadows - Solid black for light mode
      ------------------------------------------------------------------------- */
-  --shadow-neo-sm: 1px 1px 0px rgba(0, 0, 0, 0.35);
-  --shadow-neo-md: 2px 2px 0px rgba(0, 0, 0, 0.35);
-  --shadow-neo-lg: 4px 4px 0px rgba(0, 0, 0, 0.35);
-  --shadow-neo-xl: 6px 6px 0px rgba(0, 0, 0, 0.35);
-  --shadow-neo-left: -2px 0px 0px rgba(0, 0, 0, 0.35);
-  --shadow-neo-left-lg: -4px 0px 0px rgba(0, 0, 0, 0.35);
+  --shadow-neo-sm: 1px 1px 0px rgba(0, 0, 0, 0.28);
+  --shadow-neo-md: 2px 2px 0px rgba(0, 0, 0, 0.28);
+  --shadow-neo-lg: 3px 3px 0px rgba(0, 0, 0, 0.3);
+  --shadow-neo-xl: 5px 5px 0px rgba(0, 0, 0, 0.32);
+  --shadow-neo-left: -2px 0px 0px rgba(0, 0, 0, 0.28);
+  --shadow-neo-left-lg: -3px 0px 0px rgba(0, 0, 0, 0.3);
   --shadow-neo-inset: inset 2px 2px 0 var(--color-neo-border);
   --shadow-neo-inset-lg: inset 4px 4px 0 var(--color-neo-border);
 
@@ -202,12 +202,12 @@
   --color-agent-retry: #fbbf24;
 
   /* Shadows - lighter for dark mode with subtle glow */
-  --shadow-neo-sm: 1px 1px 0px rgba(224, 224, 224, 0.55);
-  --shadow-neo-md: 2px 2px 0px rgba(224, 224, 224, 0.55);
-  --shadow-neo-lg: 4px 4px 0px rgba(224, 224, 224, 0.55);
-  --shadow-neo-xl: 6px 6px 0px rgba(224, 224, 224, 0.55);
-  --shadow-neo-left: -2px 0px 0px rgba(224, 224, 224, 0.55);
-  --shadow-neo-left-lg: -4px 0px 0px rgba(224, 224, 224, 0.55);
+  --shadow-neo-sm: 1px 1px 0px rgba(224, 224, 224, 0.45);
+  --shadow-neo-md: 2px 2px 0px rgba(224, 224, 224, 0.45);
+  --shadow-neo-lg: 3px 3px 0px rgba(224, 224, 224, 0.5);
+  --shadow-neo-xl: 5px 5px 0px rgba(224, 224, 224, 0.5);
+  --shadow-neo-left: -2px 0px 0px rgba(224, 224, 224, 0.45);
+  --shadow-neo-left-lg: -3px 0px 0px rgba(224, 224, 224, 0.5);
   --shadow-neo-inset: inset 2px 2px 0 var(--color-neo-border);
   --shadow-neo-inset-lg: inset 4px 4px 0 var(--color-neo-border);
 }
@@ -245,7 +245,16 @@
     transition: transform var(--transition-neo-fast), box-shadow var(--transition-neo-fast);
   }
 
-  .neo-card.cursor-pointer:hover,
+  /* Keep cards calm by default; only lift when explicitly asked. */
+  .neo-card.cursor-pointer:hover {
+    background: linear-gradient(
+        0deg,
+        var(--color-neo-hover-subtle),
+        var(--color-neo-hover-subtle)
+      ),
+      var(--color-neo-card);
+  }
+
   .neo-card.neo-hover-lift:hover {
     transform: translate(-1px, -1px);
     box-shadow: var(--shadow-neo-lg);

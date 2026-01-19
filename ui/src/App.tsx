@@ -61,9 +61,10 @@ function App() {
     const [specYoloSelected, setSpecYoloSelected] = useState(false)
     const [showKnowledgeModal, setShowKnowledgeModal] = useState(false)
     const [setupBannerDismissedUntil, setSetupBannerDismissedUntil] = useState<number | null>(null)
-    const [toolsOpen, setToolsOpen] = useState(false)
+  const [toolsOpen, setToolsOpen] = useState(false)
   const [showProjectSwitchConfirm, setShowProjectSwitchConfirm] = useState(false)
   const [pendingProjectSelection, setPendingProjectSelection] = useState<string | null>(null)
+  const [backgroundRunProject, setBackgroundRunProject] = useState<string | null>(null)
 
   const [yoloEnabled, setYoloEnabled] = useState(false)
   const [runSettings, setRunSettings] = useState<RunSettings>({
@@ -160,6 +161,14 @@ function App() {
   const confirmMessage = pendingProjectSelection
     ? 'Switching projects will not stop the current run. You can come back anytime to see progress.'
     : 'Agents keep running in the background. You can come back to this project anytime to see progress.'
+
+  useEffect(() => {
+    if (!selectedProject) return
+    if (backgroundRunProject !== selectedProject) return
+    if (wsState.agentStatus !== 'running') {
+      setBackgroundRunProject(null)
+    }
+  }, [backgroundRunProject, selectedProject, wsState.agentStatus])
 
   // Validate stored project exists (clear if project was deleted)
   useEffect(() => {
@@ -612,13 +621,47 @@ function App() {
             )}
           </div>
         ) : !selectedProject ? (
-          <div className="neo-empty-state mt-12">
-            <h2 className="font-display text-2xl font-bold mb-2">
-              Welcome to Autonomous Coder
-            </h2>
-            <p className="text-[var(--color-neo-text-secondary)] mb-4">
-              Select a project from the dropdown above or create a new one to get started.
-            </p>
+          <div className="mt-12 space-y-6">
+            {backgroundRunProject && (
+              <div className="neo-card p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  <span className="inline-flex w-2.5 h-2.5 rounded-full bg-[var(--color-neo-progress)] shadow-neo-sm" />
+                  <div className="text-sm">
+                    <div className="font-display font-semibold">
+                      Still running in the background
+                    </div>
+                    <div className="text-[var(--color-neo-text-secondary)]">
+                      {backgroundRunProject}
+                    </div>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    className="neo-btn neo-btn-sm bg-[var(--color-neo-progress)] text-[var(--color-neo-text-on-bright)]"
+                    onClick={() => requestSelectProject(backgroundRunProject)}
+                    title="Open project"
+                  >
+                    Open
+                  </button>
+                  <button
+                    className="neo-btn neo-btn-sm bg-[var(--color-neo-bg)]"
+                    onClick={() => setBackgroundRunProject(null)}
+                    title="Dismiss"
+                  >
+                    Dismiss
+                  </button>
+                </div>
+              </div>
+            )}
+
+            <div className="neo-empty-state">
+              <h2 className="font-display text-2xl font-bold mb-2">
+                Welcome to Autonomous Coder
+              </h2>
+              <p className="text-[var(--color-neo-text-secondary)] mb-4">
+                Select a project from the dropdown above or create a new one to get started.
+              </p>
+            </div>
           </div>
         ) : (
           <div className="space-y-8">
@@ -811,6 +854,9 @@ function App() {
         variant="warning"
         onConfirm={() => {
           setShowProjectSwitchConfirm(false)
+          if (selectedProject && wsState.agentStatus === 'running' && pendingProjectSelection !== selectedProject) {
+            setBackgroundRunProject(selectedProject)
+          }
           handleSelectProject(pendingProjectSelection)
           setPendingProjectSelection(null)
         }}
