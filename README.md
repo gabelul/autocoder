@@ -260,6 +260,11 @@ Logs are pruned automatically (defaults: keep 7 days, 200 files, 200MB total). O
 - `AUTOCODER_LOGS_KEEP_FILES`
 - `AUTOCODER_LOGS_MAX_TOTAL_MB`
 
+Mission Control activity events are stored in the project DB (`agent_system.db`) and pruned periodically during runs:
+
+- `AUTOCODER_ACTIVITY_KEEP_DAYS` (default `14`)
+- `AUTOCODER_ACTIVITY_KEEP_ROWS` (default `5000`)
+
 Gatekeeper writes verification artifacts under `.autocoder/**/gatekeeper/*.json`. To prune those periodically, set `AUTOCODER_LOGS_PRUNE_ARTIFACTS=1` (uses the same retention knobs by default, or set `AUTOCODER_ARTIFACTS_KEEP_*` separately).
 In the Web UI: Settings -> Advanced -> Logs -> **Auto-prune Gatekeeper artifacts**.
 
@@ -268,6 +273,7 @@ You can also prune manually:
 `autocoder logs --project-dir <path> --prune [--dry-run] [--include-artifacts]`
 
 In the Web UI, use **Logs** (press `L`) to view/tail, prune, or delete worker log files.
+In the Web UI, press `M` (or open the drawer and click **Activity**) for a cross-agent **Mission Control** timeline (Gatekeeper/QA/regressions included).
 
 ### Dev Server Control (Web UI)
 

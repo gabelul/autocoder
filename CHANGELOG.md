@@ -26,6 +26,9 @@ All notable changes to this fork will be listed here.
 - Worker logs: copy tail to clipboard
 - Playwright MCP now runs with `--isolated` by default (disable with `AUTOCODER_PLAYWRIGHT_ISOLATED=0`)
 - Optional regression tester pool (Claude+Playwright): creates issue-like `REGRESSION` features linked via `regression_of_id`
+- Mission Control activity feed: DB-backed timeline (Gatekeeper/QA/regressions) shown on the project dashboard + bottom drawer Activity tab (shortcut: `M`)
+- Activity retention/pruning: `AUTOCODER_ACTIVITY_KEEP_DAYS`, `AUTOCODER_ACTIVITY_KEEP_ROWS` (also configurable in UI Advanced → Logs)
+- UI polish: calmer hover states (no “everything jumps”), slightly softer rounding, Assistant button stays above the logs drawer
 - Fix: Gatekeeper verify-branch sanitization is Python 3.10 compatible
 - Fix: `test_mcp` includes missing `json` import
 
