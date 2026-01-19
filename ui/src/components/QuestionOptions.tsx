@@ -126,8 +126,8 @@ export function QuestionOptions({
                     transition-all duration-150
                     ${
                       isSelected
-                        ? 'bg-[var(--color-neo-pending)] translate-x-[1px] translate-y-[1px]'
-                        : 'bg-[var(--color-neo-card)] hover:translate-x-[-1px] hover:translate-y-[-1px]'
+                        ? 'bg-[var(--color-neo-pending)]'
+                        : 'bg-[var(--color-neo-card)]'
                     }
                     disabled:opacity-50 disabled:cursor-not-allowed
                   `}
@@ -182,8 +182,8 @@ export function QuestionOptions({
                 transition-all duration-150
                 ${
                   showCustomInput[String(questionIdx)]
-                    ? 'bg-[var(--color-neo-pending)] translate-x-[1px] translate-y-[1px]'
-                    : 'bg-[var(--color-neo-card)] hover:translate-x-[-1px] hover:translate-y-[-1px]'
+                    ? 'bg-[var(--color-neo-pending)]'
+                    : 'bg-[var(--color-neo-card)]'
                 }
                 disabled:opacity-50 disabled:cursor-not-allowed
               `}

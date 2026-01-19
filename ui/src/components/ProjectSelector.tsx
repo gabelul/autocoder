@@ -1,14 +1,13 @@
 import { useState } from 'react'
 import { ChevronDown, Plus, FolderOpen, Loader2, LayoutGrid } from 'lucide-react'
 import type { ProjectSummary } from '../lib/types'
-import { NewProjectModal } from './NewProjectModal'
 
 interface ProjectSelectorProps {
   projects: ProjectSummary[]
   selectedProject: string | null
   onSelectProject: (name: string | null) => void
   isLoading: boolean
-  onSpecCreatingChange?: (isCreating: boolean) => void
+  onNewProject?: () => void
 }
 
 export function ProjectSelector({
@@ -16,15 +15,9 @@ export function ProjectSelector({
   selectedProject,
   onSelectProject,
   isLoading,
-  onSpecCreatingChange,
+  onNewProject,
 }: ProjectSelectorProps) {
   const [isOpen, setIsOpen] = useState(false)
-  const [showNewProjectModal, setShowNewProjectModal] = useState(false)
-
-  const handleProjectCreated = (projectName: string) => {
-    onSelectProject(projectName)
-    setIsOpen(false)
-  }
 
   const selectedProjectData = projects.find(p => p.name === selectedProject)
 
@@ -123,7 +116,7 @@ export function ProjectSelector({
             {/* Create New */}
             <button
               onClick={() => {
-                setShowNewProjectModal(true)
+                onNewProject?.()
                 setIsOpen(false)
               }}
               className="w-full neo-dropdown-item flex items-center gap-2 font-bold"
@@ -134,14 +127,6 @@ export function ProjectSelector({
           </div>
         </>
       )}
-
-      {/* New Project Modal */}
-      <NewProjectModal
-        isOpen={showNewProjectModal}
-        onClose={() => setShowNewProjectModal(false)}
-        onProjectCreated={handleProjectCreated}
-        onStepChange={(step) => onSpecCreatingChange?.(step === 'chat')}
-      />
     </div>
   )
 }

@@ -137,6 +137,7 @@ autocoder-ui
 ### Web UI Settings
 
 - Quick run settings: **Settings** button (or press `S`).
+- Dashboard navigation: click the **Autonomous Coder** logo (or choose **Dashboard** in the project dropdown) to go back without stopping any running agents. If something is still running, the Dashboard shows a “running in the background” card with a one-click return.
 - Full settings hub: open `http://127.0.0.1:8888/#/settings` (Run / Models / Advanced).
 - Advanced settings (Run/Advanced/Diagnostics defaults) are stored globally in `~/.autocoder/settings.db` (override path with `AUTOCODER_SETTINGS_DB_PATH`). Legacy `~/.autocoder/ui_settings.json` is read once and auto-migrated.
 - When the UI starts a run, **saved** advanced settings override `.env`/shell env vars. If you’ve never saved Advanced Settings, the UI does not override env vars.

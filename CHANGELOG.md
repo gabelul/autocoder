@@ -4,6 +4,7 @@ All notable changes to this fork will be listed here.
 
 ## Unreleased
 
+- Home Dashboard: bento layout with projects grid, system status, and shortcuts; safe “back to Dashboard” navigation even while agents run (shows “running in background” card)
 - Project setup required banner with 24h snooze (Expand stays locked until spec is real)
 - Project reset endpoint (runtime reset + full reset) and UI Danger Zone controls
 - Knowledge files (`/knowledge/*.md`) injected into prompts + UI editor modal

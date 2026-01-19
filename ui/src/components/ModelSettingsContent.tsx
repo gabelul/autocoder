@@ -149,7 +149,7 @@ export function ModelSettingsContent({
                 onClick={() => handlePresetChange(id)}
                 className={`
                   neo-card p-3 text-left transition-all
-                  ${selectedPreset === id ? 'ring-4 ring-[var(--color-neo-accent)] translate-x-[-4px] translate-y-[-4px]' : ''}
+                  ${selectedPreset === id ? 'ring-4 ring-[var(--color-neo-accent)] shadow-neo-lg' : ''}
                 `}
               >
                 <div className="font-display font-bold text-sm mb-2 uppercase">{preset.name}</div>

@@ -127,7 +127,7 @@ export function SettingsModal({
                   <button
                     key={opt.id}
                     className={`neo-card p-4 text-left transition-all ${
-                      active ? 'ring-4 ring-[var(--color-neo-accent)] translate-x-[-4px] translate-y-[-4px]' : ''
+                      active ? 'ring-4 ring-[var(--color-neo-accent)] shadow-neo-lg' : ''
                     } ${disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
                     disabled={disabled}
                     onClick={() => onChange({ ...settings, mode: opt.id })}

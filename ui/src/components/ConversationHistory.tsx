@@ -102,7 +102,7 @@ export function ConversationHistory({
                   ${
                     conv.id === currentConversationId
                       ? 'bg-[var(--color-neo-progress)] text-white'
-                      : 'bg-white hover:shadow-[2px_2px_0px_rgba(0,0,0,1)] hover:-translate-y-0.5'
+                      : 'bg-white hover:bg-[var(--color-neo-hover-subtle)] hover:shadow-neo-md'
                   }
                 `}
               >

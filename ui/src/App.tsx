@@ -6,7 +6,6 @@ import { useFeatureSound } from './hooks/useFeatureSound'
 import { useCelebration } from './hooks/useCelebration'
 import { useAdvancedSettings } from './hooks/useAdvancedSettings'
 
-const STORAGE_KEY = 'autonomous-coder-selected-project'
 import { ProjectSelector } from './components/ProjectSelector'
 import { KanbanBoard } from './components/KanbanBoard'
 import { AgentControl } from './components/AgentControl'
@@ -22,15 +21,19 @@ import { AssistantFAB } from './components/AssistantFAB'
 import { AssistantPanel } from './components/AssistantPanel'
 import { AgentStatusGrid } from './components/AgentStatusGrid'
 import { RecentActivityCard } from './components/RecentActivityCard'
+import { NewProjectModal } from './components/NewProjectModal'
 import { SettingsModal, type RunSettings } from './components/SettingsModal'
 import { SettingsPage } from './pages/SettingsPage'
+import { DashboardPage } from './pages/DashboardPage'
 import { ProjectSetupRequired } from './components/ProjectSetupRequired'
 import { SpecCreationChat } from './components/SpecCreationChat'
 import { KnowledgeFilesModal } from './components/KnowledgeFilesModal'
 import { ConfirmationDialog } from './components/ConfirmationDialog'
-  import { Plus, Loader2, FileText, Settings as SettingsIcon, Sparkles, BookOpen, ChevronDown, List } from 'lucide-react'
+import { Plus, Loader2, FileText, Settings as SettingsIcon, Sparkles, BookOpen, ChevronDown, List, MessageCircle } from 'lucide-react'
 import type { Feature } from './lib/types'
 import { startAgent } from './lib/api'
+
+const STORAGE_KEY = 'autonomous-coder-selected-project'
 
 function App() {
   const queryClient = useQueryClient()
@@ -44,6 +47,7 @@ function App() {
   })
   const [showAddFeature, setShowAddFeature] = useState(false)
   const [showExpandProject, setShowExpandProject] = useState(false)
+  const [showNewProjectModal, setShowNewProjectModal] = useState(false)
   const [selectedFeature, setSelectedFeature] = useState<Feature | null>(null)
   const [setupComplete, setSetupComplete] = useState(true) // Start optimistic
   const [debugOpen, setDebugOpen] = useState(false)
@@ -59,9 +63,9 @@ function App() {
   const [showSpecChat, setShowSpecChat] = useState(false)
   const [specInitializerStatus, setSpecInitializerStatus] = useState<'idle' | 'starting' | 'error'>('idle')
   const [specInitializerError, setSpecInitializerError] = useState<string | null>(null)
-    const [specYoloSelected, setSpecYoloSelected] = useState(false)
-    const [showKnowledgeModal, setShowKnowledgeModal] = useState(false)
-    const [setupBannerDismissedUntil, setSetupBannerDismissedUntil] = useState<number | null>(null)
+  const [specYoloSelected, setSpecYoloSelected] = useState(false)
+  const [showKnowledgeModal, setShowKnowledgeModal] = useState(false)
+  const [setupBannerDismissedUntil, setSetupBannerDismissedUntil] = useState<number | null>(null)
   const [toolsOpen, setToolsOpen] = useState(false)
   const [showProjectSwitchConfirm, setShowProjectSwitchConfirm] = useState(false)
   const [pendingProjectSelection, setPendingProjectSelection] = useState<string | null>(null)
@@ -218,6 +222,12 @@ function App() {
         setShowAddFeature(true)
       }
 
+      // N : New project (Dashboard)
+      if ((e.key === 'n' || e.key === 'N') && !selectedProject) {
+        e.preventDefault()
+        setShowNewProjectModal(true)
+      }
+
       // A : Toggle assistant panel (when project selected)
       if ((e.key === 'a' || e.key === 'A') && selectedProject && !isSpecCreating) {
         e.preventDefault()
@@ -273,6 +283,8 @@ function App() {
           setShowKnowledgeModal(false)
         } else if (showSettings) {
           setShowSettings(false)
+        } else if (showNewProjectModal) {
+          setShowNewProjectModal(false)
         } else if (assistantOpen) {
           setAssistantOpen(false)
         } else if (showAddFeature) {
@@ -289,26 +301,26 @@ function App() {
 
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [selectedProject, showAddFeature, showExpandProject, selectedFeature, debugOpen, assistantOpen, showSettings, showSpecChat, showKnowledgeModal, route])
+  }, [selectedProject, showAddFeature, showExpandProject, selectedFeature, debugOpen, assistantOpen, showSettings, showSpecChat, showKnowledgeModal, showNewProjectModal, route, isSpecCreating])
 
   // Hash-based routing (no router dependency)
-    useEffect(() => {
-      const onHash = () => {
-        setRoute(window.location.hash.startsWith('#/settings') ? 'settings' : 'main')
-      }
-      window.addEventListener('hashchange', onHash)
-      return () => window.removeEventListener('hashchange', onHash)
-    }, [])
+  useEffect(() => {
+    const onHash = () => {
+      setRoute(window.location.hash.startsWith('#/settings') ? 'settings' : 'main')
+    }
+    window.addEventListener('hashchange', onHash)
+    return () => window.removeEventListener('hashchange', onHash)
+  }, [])
 
-    useEffect(() => {
-      const onDocClick = (e: MouseEvent) => {
-        if (!(e.target as HTMLElement)?.closest?.('[data-tools-menu]')) {
-          setToolsOpen(false)
-        }
+  useEffect(() => {
+    const onDocClick = (e: MouseEvent) => {
+      if (!(e.target as HTMLElement)?.closest?.('[data-tools-menu]')) {
+        setToolsOpen(false)
       }
-      document.addEventListener('click', onDocClick)
-      return () => document.removeEventListener('click', onDocClick)
-    }, [])
+    }
+    document.addEventListener('click', onDocClick)
+    return () => document.removeEventListener('click', onDocClick)
+  }, [])
 
   // Persist run settings locally (best-effort)
   useEffect(() => {
@@ -394,133 +406,148 @@ function App() {
 
   return (
     <div className="min-h-screen bg-[var(--color-neo-bg)]">
-        {/* Header */}
-        <header className="bg-[var(--color-neo-neutral-900)] text-white border-b-2 border-[var(--color-neo-border)]">
-          <div className="max-w-7xl mx-auto px-4 py-4">
-            <div className="flex flex-col gap-3">
-              {/* Row 1: Brand + Project + Run Control */}
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div className="flex items-center gap-4">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      window.location.hash = ''
-                      requestSelectProject(null)
-                    }}
-                    className="font-display text-2xl font-semibold tracking-tight hover:opacity-90"
-                    title="Back to dashboard"
-                  >
-                    Autonomous Coder
-                  </button>
-                  <div className="hidden md:block h-6 w-px bg-white/20" />
-                  <div className="flex items-center gap-2">
-                    {route === 'settings' && (
-                      <button
-                        onClick={() => {
-                          window.location.hash = ''
-                        }}
-                        className="neo-btn text-xs bg-white text-[var(--color-neo-text)] flex items-center gap-2"
-                        title="Back"
-                      >
-                        <span className="hidden sm:inline">Back</span>
-                        <span className="font-mono text-xs">Esc</span>
-                      </button>
-                    )}
-                    <ProjectSelector
-                      projects={projects ?? []}
-                      selectedProject={selectedProject}
-                      onSelectProject={requestSelectProject}
-                      isLoading={projectsLoading}
-                      onSpecCreatingChange={(v) => setIsSpecCreating(v)}
-                    />
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-3">
-                  {selectedProject && (setupStatus?.glm_mode || setupStatus?.custom_api) ? (
-                    <span
-                      className={`neo-badge ${setupStatus?.glm_mode ? 'bg-purple-600 text-white' : 'bg-indigo-600 text-white'}`}
-                      title={setupStatus?.glm_mode ? 'GLM / custom Anthropic-compatible endpoint enabled' : 'Custom API endpoint enabled'}
-                    >
-                      {setupStatus?.glm_mode ? 'GLM' : 'ALT API'}
-                    </span>
-                  ) : null}
-
-                  {selectedProject && (
-                    <AgentControl
-                      projectName={selectedProject}
-                      status={wsState.agentStatus}
-                      yoloMode={agentStatusData?.yolo_mode ?? false}
-                      parallelMode={agentStatusData?.parallel_mode ?? false}
-                      parallelCount={agentStatusData?.parallel_count ?? null}
-                      modelPreset={agentStatusData?.model_preset ?? null}
-                      yoloEnabled={yoloEnabled}
-                      onToggleYolo={() => {
-                        setYoloEnabled((prev) => {
-                          const next = !prev
-                          if (next) {
-                            setRunSettings((s) => ({ ...s, mode: 'standard' }))
-                          }
-                          return next
-                        })
+      {/* Header */}
+      <header className="bg-[var(--color-neo-neutral-900)] text-white border-b-2 border-[var(--color-neo-border)]">
+        <div className="max-w-7xl mx-auto px-4 py-4">
+          <div className="flex flex-col gap-3">
+            {/* Row 1: Brand + Project + Run Control */}
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-4">
+                <button
+                  type="button"
+                  onClick={() => {
+                    window.location.hash = ''
+                    requestSelectProject(null)
+                  }}
+                  className="font-display text-2xl font-semibold tracking-tight hover:opacity-90"
+                  title="Back to dashboard"
+                >
+                  Autonomous Coder
+                </button>
+                <div className="hidden md:block h-6 w-px bg-white/20" />
+                <div className="flex items-center gap-2">
+                  {route === 'settings' && (
+                    <button
+                      onClick={() => {
+                        window.location.hash = ''
                       }}
-                      runMode={runSettings.mode}
-                      parallelCountSetting={runSettings.parallelCount}
-                      parallelPresetSetting={runSettings.parallelPreset}
-                    />
+                      className="neo-btn text-xs bg-white text-[var(--color-neo-text)] flex items-center gap-2"
+                      title="Back"
+                    >
+                      <span className="hidden sm:inline">Back</span>
+                      <span className="font-mono text-xs">Esc</span>
+                    </button>
                   )}
+                  <ProjectSelector
+                    projects={projects ?? []}
+                    selectedProject={selectedProject}
+                    onSelectProject={requestSelectProject}
+                    isLoading={projectsLoading}
+                    onNewProject={() => setShowNewProjectModal(true)}
+                  />
                 </div>
               </div>
 
-              {/* Row 2: Project Actions */}
-              {selectedProject && route === 'main' && (
-                <div className="flex flex-wrap items-center gap-2 border-t border-white/15 pt-3">
-                  <button
-                    onClick={() => setShowAddFeature(true)}
-                    className="neo-btn neo-btn-primary text-sm flex items-center gap-2"
-                    title="Press N"
-                    aria-label="Add feature"
+              <div className="flex items-center gap-3">
+                {selectedProject && (setupStatus?.glm_mode || setupStatus?.custom_api) ? (
+                  <span
+                    className={`neo-badge ${setupStatus?.glm_mode ? 'bg-purple-600 text-white' : 'bg-indigo-600 text-white'}`}
+                    title={
+                      setupStatus?.glm_mode
+                        ? 'GLM / custom Anthropic-compatible endpoint enabled'
+                        : 'Custom API endpoint enabled'
+                    }
                   >
-                    <Plus size={18} />
-                    <span className="hidden sm:inline">Add Feature</span>
-                    <kbd className="hidden md:inline ml-1.5 px-1.5 py-0.5 text-xs bg-black/20 rounded font-mono">
-                      N
-                    </kbd>
-                  </button>
+                    {setupStatus?.glm_mode ? 'GLM' : 'ALT API'}
+                  </span>
+                ) : null}
 
-                  <button
-                    onClick={() => setShowExpandProject(true)}
-                    disabled={!canExpandProject}
-                    className={`neo-btn text-sm flex items-center gap-2 ${
-                      canExpandProject
-                        ? 'bg-[var(--color-neo-progress)] text-[var(--color-neo-text)]'
-                        : 'bg-white/60 text-[var(--color-neo-text-secondary)] cursor-not-allowed'
-                    }`}
-                    title={canExpandProject ? 'Expand Project (Press E)' : 'Create a spec first to expand'}
-                    aria-label="Expand project"
-                  >
-                    <Sparkles size={18} />
-                    <span className="hidden sm:inline">Expand</span>
-                    <kbd className="hidden md:inline ml-1.5 px-1.5 py-0.5 text-xs bg-black/20 rounded font-mono">
-                      E
-                    </kbd>
-                  </button>
+                {selectedProject && (
+                  <AgentControl
+                    projectName={selectedProject}
+                    status={wsState.agentStatus}
+                    yoloMode={agentStatusData?.yolo_mode ?? false}
+                    parallelMode={agentStatusData?.parallel_mode ?? false}
+                    parallelCount={agentStatusData?.parallel_count ?? null}
+                    modelPreset={agentStatusData?.model_preset ?? null}
+                    yoloEnabled={yoloEnabled}
+                    onToggleYolo={() => {
+                      setYoloEnabled((prev) => {
+                        const next = !prev
+                        if (next) {
+                          setRunSettings((s) => ({ ...s, mode: 'standard' }))
+                        }
+                        return next
+                      })
+                    }}
+                    runMode={runSettings.mode}
+                    parallelCountSetting={runSettings.parallelCount}
+                    parallelPresetSetting={runSettings.parallelPreset}
+                  />
+                )}
+              </div>
+            </div>
 
-                  <button
-                    onClick={() => setShowKnowledgeModal(true)}
-                    className="neo-btn text-sm bg-[var(--color-neo-card)] text-[var(--color-neo-text)] flex items-center gap-2"
-                    title="Knowledge Files (Press K)"
-                    aria-label="Knowledge files"
-                  >
-                    <BookOpen size={18} />
-                    <span className="hidden sm:inline">Knowledge</span>
-                    <kbd className="hidden md:inline ml-1.5 px-1.5 py-0.5 text-xs bg-black/20 rounded font-mono">
-                      K
-                    </kbd>
-                  </button>
+            {/* Row 2: Project Actions */}
+            {selectedProject && route === 'main' && (
+              <div className="flex flex-wrap items-center gap-2 border-t border-white/15 pt-3">
+                <button
+                  onClick={() => setShowAddFeature(true)}
+                  className="neo-btn neo-btn-primary text-sm flex items-center gap-2"
+                  title="Press N"
+                  aria-label="Add feature"
+                >
+                  <Plus size={18} />
+                  <span className="hidden sm:inline">Add Feature</span>
+                  <kbd className="hidden md:inline ml-1.5 px-1.5 py-0.5 text-xs bg-black/20 rounded font-mono">
+                    N
+                  </kbd>
+                </button>
+
+                <button
+                  onClick={() => setShowExpandProject(true)}
+                  disabled={!canExpandProject}
+                  className={`neo-btn text-sm flex items-center gap-2 ${
+                    canExpandProject
+                      ? 'bg-[var(--color-neo-progress)] text-[var(--color-neo-text)]'
+                      : 'bg-white/60 text-[var(--color-neo-text-secondary)] cursor-not-allowed'
+                  }`}
+                  title={canExpandProject ? 'Expand Project (Press E)' : 'Create a spec first to expand'}
+                  aria-label="Expand project"
+                >
+                  <Sparkles size={18} />
+                  <span className="hidden sm:inline">Expand</span>
+                  <kbd className="hidden md:inline ml-1.5 px-1.5 py-0.5 text-xs bg-black/20 rounded font-mono">
+                    E
+                  </kbd>
+                </button>
+
+                <button
+                  onClick={() => setShowKnowledgeModal(true)}
+                  className="neo-btn text-sm bg-[var(--color-neo-card)] text-[var(--color-neo-text)] flex items-center gap-2"
+                  title="Knowledge Files (Press K)"
+                  aria-label="Knowledge files"
+                >
+                  <BookOpen size={18} />
+                  <span className="hidden sm:inline">Knowledge</span>
+                  <kbd className="hidden md:inline ml-1.5 px-1.5 py-0.5 text-xs bg-black/20 rounded font-mono">
+                    K
+                  </kbd>
+                </button>
 
                   {/* Desktop utility buttons */}
                   <div className="hidden md:flex items-center gap-2">
+                    <button
+                      onClick={() => setAssistantOpen((prev) => !prev)}
+                      className="neo-btn text-sm bg-[var(--color-neo-bg)] text-[var(--color-neo-text)] px-3"
+                      title="Assistant (Press A)"
+                      aria-label="Assistant"
+                      disabled={isSpecCreating}
+                    >
+                      <MessageCircle size={18} />
+                      <span className="sr-only">Assistant</span>
+                    </button>
+
                     <button
                       onClick={() => {
                         setShowSettings(true)
@@ -574,6 +601,17 @@ function App() {
                         <button
                           onClick={() => {
                             setToolsOpen(false)
+                            setAssistantOpen((prev) => !prev)
+                          }}
+                          className="neo-btn w-full text-sm mb-2 flex items-center gap-2"
+                          disabled={isSpecCreating}
+                        >
+                          <MessageCircle size={16} />
+                          Assistant
+                        </button>
+                        <button
+                          onClick={() => {
+                            setToolsOpen(false)
                             setLogsTab('workers')
                             setDebugOpen(true)
                           }}
@@ -596,11 +634,11 @@ function App() {
                       </div>
                     )}
                   </div>
-                </div>
-              )}
-            </div>
+              </div>
+            )}
           </div>
-        </header>
+        </div>
+      </header>
 
       {/* Main Content */}
       <main
@@ -640,48 +678,15 @@ function App() {
             )}
           </div>
         ) : !selectedProject ? (
-          <div className="mt-12 space-y-6">
-            {backgroundRunProject && (
-              <div className="neo-card p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                <div className="flex items-center gap-3">
-                  <span className="inline-flex w-2.5 h-2.5 rounded-full bg-[var(--color-neo-progress)] shadow-neo-sm" />
-                  <div className="text-sm">
-                    <div className="font-display font-semibold">
-                      Still running in the background
-                    </div>
-                    <div className="text-[var(--color-neo-text-secondary)]">
-                      {backgroundRunProject}
-                    </div>
-                  </div>
-                </div>
-                <div className="flex items-center gap-2">
-                  <button
-                    className="neo-btn neo-btn-sm bg-[var(--color-neo-progress)] text-[var(--color-neo-text-on-bright)]"
-                    onClick={() => requestSelectProject(backgroundRunProject)}
-                    title="Open project"
-                  >
-                    Open
-                  </button>
-                  <button
-                    className="neo-btn neo-btn-sm bg-[var(--color-neo-bg)]"
-                    onClick={() => setBackgroundRunProject(null)}
-                    title="Dismiss"
-                  >
-                    Dismiss
-                  </button>
-                </div>
-              </div>
-            )}
-
-            <div className="neo-empty-state">
-              <h2 className="font-display text-2xl font-bold mb-2">
-                Welcome to Autonomous Coder
-              </h2>
-              <p className="text-[var(--color-neo-text-secondary)] mb-4">
-                Select a project from the dropdown above or create a new one to get started.
-              </p>
-            </div>
-          </div>
+          <DashboardPage
+            projects={projects ?? []}
+            isLoading={projectsLoading}
+            setupStatus={setupStatus}
+            backgroundRunProject={backgroundRunProject}
+            onOpenProject={(name) => requestSelectProject(name)}
+            onDismissBackgroundRun={() => setBackgroundRunProject(null)}
+            onNewProject={() => setShowNewProjectModal(true)}
+          />
         ) : (
           <div className="space-y-8">
             {showSetupBanner && selectedProject && (
@@ -774,6 +779,16 @@ function App() {
         )}
       </main>
 
+      {/* New Project Modal */}
+      <NewProjectModal
+        isOpen={showNewProjectModal}
+        onClose={() => setShowNewProjectModal(false)}
+        onProjectCreated={(name) => {
+          setShowNewProjectModal(false)
+          requestSelectProject(name)
+        }}
+      />
+
       {/* Add Feature Modal */}
       {showAddFeature && selectedProject && (
         <AddFeatureForm
@@ -863,7 +878,7 @@ function App() {
           <AssistantFAB
             onClick={() => setAssistantOpen(!assistantOpen)}
             isOpen={assistantOpen}
-            bottomOffsetPx={(debugOpen ? debugPanelHeight : 40) + 24}
+            bottomOffsetPx={(debugOpen ? debugPanelHeight : 56) + 24}
           />
           <AssistantPanel
             projectName={selectedProject}
