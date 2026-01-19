@@ -997,11 +997,36 @@ class Orchestrator:
                 )
                 with contextlib.suppress(Exception):
                     self.database.create_branch(claimed_branch, feature_id=feature_id, agent_id=agent_id)
+                with contextlib.suppress(Exception):
+                    self.database.add_activity_event(
+                        event_type="agent.spawn",
+                        level="INFO",
+                        message=f"Spawned {agent_id} for feature #{feature_id}",
+                        agent_id=agent_id,
+                        feature_id=int(feature_id),
+                        data={
+                            "branch": str(claimed_branch),
+                            "provider": str(provider_for_env),
+                            "model": str(model),
+                            "api_port": int(api_port),
+                            "web_port": int(web_port),
+                            "worktree": str(worktree_info.get("worktree_path") or ""),
+                        },
+                    )
 
                 spawned_agents.append(agent_id)
 
             except Exception as e:
                 logger.error(f"   ❌ Failed to spawn agent: {e}")
+                with contextlib.suppress(Exception):
+                    self.database.add_activity_event(
+                        event_type="agent.spawn_failed",
+                        level="ERROR",
+                        message=f"Failed to spawn {agent_id} for feature #{feature_id}",
+                        agent_id=agent_id,
+                        feature_id=int(feature_id),
+                        data={"error": str(e)},
+                    )
                 # Cleanup on failure
                 self.database.mark_feature_failed(feature_id=feature_id, reason="Agent spawn failed")
                 self.worktree_manager.delete_worktree(agent_id, force=True)
@@ -1339,9 +1364,34 @@ class Orchestrator:
                 web_port=web_port,
                 log_file_path=str(log_file_path),
             )
+            with contextlib.suppress(Exception):
+                self.database.add_activity_event(
+                    event_type="qa.spawn",
+                    level="INFO",
+                    message=f"QA sub-agent {qa_agent_id} started for feature #{feature_id}",
+                    agent_id=qa_agent_id,
+                    feature_id=int(feature_id),
+                    data={
+                        "branch": str(branch_name),
+                        "provider": str(provider),
+                        "model": str(model) if provider == "claude" else "",
+                        "max_iterations": int(max_iterations),
+                        "api_port": int(api_port),
+                        "web_port": int(web_port),
+                    },
+                )
             return qa_agent_id
         except Exception as e:
             logger.error(f"   ❌ Failed to spawn QA sub-agent process: {e}")
+            with contextlib.suppress(Exception):
+                self.database.add_activity_event(
+                    event_type="qa.spawn_failed",
+                    level="ERROR",
+                    message=f"Failed to spawn QA sub-agent for feature #{feature_id}",
+                    agent_id=str(qa_agent_id),
+                    feature_id=int(feature_id),
+                    data={"error": str(e), "branch": str(branch_name), "provider": str(provider)},
+                )
             with contextlib.suppress(Exception):
                 self.database.requeue_feature(feature_id, preserve_branch=True)
             with contextlib.suppress(Exception):
@@ -1518,9 +1568,34 @@ class Orchestrator:
                     web_port=web_port,
                     log_file_path=str(log_file_path),
                 )
+                with contextlib.suppress(Exception):
+                    self.database.add_activity_event(
+                        event_type="regression.spawn",
+                        level="INFO",
+                        message=f"Regression tester {agent_id} started",
+                        agent_id=agent_id,
+                        feature_id=None,
+                        data={
+                            "branch": str(branch),
+                            "model": str(model),
+                            "max_iterations": int(max_iterations),
+                            "api_port": int(api_port),
+                            "web_port": int(web_port),
+                            "worktree": str(worktree_info.get("worktree_path") or ""),
+                        },
+                    )
                 spawned.append(agent_id)
             except Exception as e:
                 logger.error(f"   ❌ Failed to spawn regression tester process: {e}")
+                with contextlib.suppress(Exception):
+                    self.database.add_activity_event(
+                        event_type="regression.spawn_failed",
+                        level="ERROR",
+                        message=f"Failed to spawn regression tester {agent_id}",
+                        agent_id=agent_id,
+                        feature_id=None,
+                        data={"error": str(e)},
+                    )
                 with contextlib.suppress(Exception):
                     self.worktree_manager.delete_worktree(agent_id, force=True)
                 self.port_allocator.release_ports(agent_id)
@@ -1771,6 +1846,15 @@ class Orchestrator:
 
                     # Mark as crashed
                     self.database.mark_agent_crashed(agent_id)
+                    with contextlib.suppress(Exception):
+                        self.database.add_activity_event(
+                            event_type="agent.crashed",
+                            level="ERROR",
+                            message=f"Agent {agent_id} crashed (pid {pid} missing)",
+                            agent_id=str(agent_id),
+                            feature_id=int(agent.get("feature_id") or 0) or None,
+                            data={"pid": int(pid)},
+                        )
 
                     # Reset feature for retry
                     if agent.get("feature_id"):
@@ -1800,6 +1884,15 @@ class Orchestrator:
                     logger.info(f"   Released ports for {agent_id}")
 
                 self.database.mark_agent_crashed(agent_id)
+                with contextlib.suppress(Exception):
+                    self.database.add_activity_event(
+                        event_type="agent.crashed",
+                        level="ERROR",
+                        message=f"Agent {agent_id} crashed (missing pid)",
+                        agent_id=str(agent_id),
+                        feature_id=int(agent.get("feature_id") or 0) or None,
+                        data={},
+                    )
 
     def _recover_completed_agents(self):
         """
@@ -1816,6 +1909,15 @@ class Orchestrator:
             worktree_path = agent.get("worktree_path")
 
             logger.info(f"Processing completed agent: {agent_id}")
+            with contextlib.suppress(Exception):
+                self.database.add_activity_event(
+                    event_type="agent.completed",
+                    level="INFO",
+                    message=f"{agent_id} completed",
+                    agent_id=str(agent_id),
+                    feature_id=int(feature_id) if feature_id else None,
+                    data={"feature_id": int(feature_id) if feature_id else None},
+                )
 
             if feature_id:
                 feature = self.database.get_feature(feature_id)
@@ -1834,6 +1936,15 @@ class Orchestrator:
 
                     if needs_verification:
                         logger.info(f"🧪 Gatekeeper verifying feature #{feature_id} ({branch_name})...")
+                        with contextlib.suppress(Exception):
+                            self.database.add_activity_event(
+                                event_type="gatekeeper.verify",
+                                level="INFO",
+                                message=f"Gatekeeper verifying feature #{feature_id} ({branch_name})",
+                                agent_id=str(agent_id),
+                                feature_id=int(feature_id),
+                                data={"branch": str(branch_name)},
+                            )
                         # Refuse to verify "empty" branches (no commits beyond base).
                         base = self._detect_main_branch()
                         try:
@@ -1852,6 +1963,15 @@ class Orchestrator:
                             logger.warning(
                                 f"Feature #{feature_id} branch {branch_name} has no commits beyond {base}; requeuing"
                             )
+                            with contextlib.suppress(Exception):
+                                self.database.add_activity_event(
+                                    event_type="gatekeeper.rejected",
+                                    level="WARN",
+                                    message=f"Feature #{feature_id} rejected: no commits on {branch_name}",
+                                    agent_id=str(agent_id),
+                                    feature_id=int(feature_id),
+                                    data={"branch": str(branch_name), "base": str(base)},
+                                )
                             self.database.mark_feature_failed(
                                 feature_id=feature_id,
                                 reason="No commits on branch for verification",
@@ -1872,6 +1992,19 @@ class Orchestrator:
                             )
                             if not pre.get("approved"):
                                 excerpt = self._format_gatekeeper_failure_excerpt(pre)
+                                with contextlib.suppress(Exception):
+                                    self.database.add_activity_event(
+                                        event_type="preflight.rejected",
+                                        level="WARN",
+                                        message=f"Preflight rejected feature #{feature_id}",
+                                        agent_id=str(agent_id),
+                                        feature_id=int(feature_id),
+                                        data={
+                                            "reason": str(pre.get("reason") or "").strip(),
+                                            "artifact_path": str(pre.get("artifact_path") or "").strip(),
+                                            "excerpt": excerpt[:2000],
+                                        },
+                                    )
                                 self._handle_verification_rejection(
                                     feature_id=int(feature_id),
                                     feature=feature,
@@ -1901,6 +2034,18 @@ class Orchestrator:
 
                         if verification.get("approved"):
                             logger.info(f"✅ Gatekeeper approved feature #{feature_id}")
+                            with contextlib.suppress(Exception):
+                                self.database.add_activity_event(
+                                    event_type="gatekeeper.approved",
+                                    level="INFO",
+                                    message=f"Gatekeeper approved feature #{feature_id}",
+                                    agent_id=str(agent_id),
+                                    feature_id=int(feature_id),
+                                    data={
+                                        "branch": str(branch_name),
+                                        "merge_commit": str(verification.get("merge_commit") or "").strip(),
+                                    },
+                                )
                             self.database.mark_feature_passing(feature_id)
                             merge_commit = verification.get("merge_commit")
                             if merge_commit:
@@ -1910,6 +2055,19 @@ class Orchestrator:
                             reason = verification.get("reason") or "Gatekeeper rejected feature"
                             logger.warning(f"❌ Gatekeeper rejected feature #{feature_id}: {reason}")
                             excerpt = self._format_gatekeeper_failure_excerpt(verification)
+                            with contextlib.suppress(Exception):
+                                self.database.add_activity_event(
+                                    event_type="gatekeeper.rejected",
+                                    level="WARN",
+                                    message=f"Gatekeeper rejected feature #{feature_id}: {reason}",
+                                    agent_id=str(agent_id),
+                                    feature_id=int(feature_id),
+                                    data={
+                                        "reason": str(reason).strip(),
+                                        "artifact_path": str(verification.get("artifact_path") or "").strip(),
+                                        "excerpt": excerpt[:2000],
+                                    },
+                                )
                             self._handle_verification_rejection(
                                 feature_id=int(feature_id),
                                 feature=feature,
@@ -1976,6 +2134,16 @@ class Orchestrator:
                     logger.info(
                         f"Pruned gatekeeper artifacts: deleted_files={a.deleted_files}, deleted_bytes={a.deleted_bytes}"
                     )
+            try:
+                keep_days_raw = str(os.environ.get("AUTOCODER_ACTIVITY_KEEP_DAYS", "")).strip()
+                keep_rows_raw = str(os.environ.get("AUTOCODER_ACTIVITY_KEEP_ROWS", "")).strip()
+                keep_days = int(keep_days_raw) if keep_days_raw else 14
+                keep_rows = int(keep_rows_raw) if keep_rows_raw else 5000
+                deleted = int(self.database.prune_activity_events(keep_days=keep_days, keep_rows=keep_rows) or 0)
+                if deleted:
+                    logger.info(f"Pruned activity events: deleted={deleted}")
+            except Exception:
+                pass
         except Exception as e:
             logger.warning(f"Failed to prune worker logs: {e}")
 

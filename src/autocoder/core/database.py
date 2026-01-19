@@ -410,6 +410,22 @@ class Database:
                 )
             """)
 
+            # Activity events (Mission Control timeline)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS activity_events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    level TEXT DEFAULT 'INFO',
+                    event_type TEXT NOT NULL,
+                    message TEXT NOT NULL,
+                    agent_id TEXT,
+                    feature_id INTEGER,
+                    data_json TEXT,
+
+                    FOREIGN KEY (feature_id) REFERENCES features(id)
+                )
+            """)
+
             # Project-scoped settings (key/value JSON)
             # Stored inside the project's agent_system.db so settings travel with the project.
             cursor.execute("""
@@ -449,6 +465,16 @@ class Database:
             cursor.execute("""
                 CREATE INDEX IF NOT EXISTS idx_agent_heartbeats_last_ping
                 ON agent_heartbeats(last_ping)
+            """)
+
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_activity_events_agent_id
+                ON activity_events(agent_id)
+            """)
+
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_activity_events_feature_id
+                ON activity_events(feature_id)
             """)
 
             conn.commit()
@@ -498,6 +524,144 @@ class Database:
                 (k, raw),
             )
             conn.commit()
+
+    def add_activity_event(
+        self,
+        *,
+        event_type: str,
+        message: str,
+        level: str = "INFO",
+        agent_id: str | None = None,
+        feature_id: int | None = None,
+        data: dict[str, Any] | None = None,
+    ) -> int:
+        event_type = (event_type or "").strip()
+        if not event_type:
+            raise ValueError("event_type is required")
+
+        message = (message or "").strip() or event_type
+        raw_level = (level or "INFO").strip().upper()
+        level = raw_level if raw_level else "INFO"
+
+        payload = None
+        if data is not None:
+            try:
+                payload = json.dumps(data, ensure_ascii=False)
+            except Exception:
+                payload = None
+
+        with self.get_connection() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                """
+                INSERT INTO activity_events (level, event_type, message, agent_id, feature_id, data_json)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (level, event_type, message, agent_id, feature_id, payload),
+            )
+            event_id = int(cur.lastrowid or 0)
+            conn.commit()
+        return event_id
+
+    def get_activity_events(
+        self,
+        *,
+        limit: int = 200,
+        after_id: int | None = None,
+    ) -> list[dict[str, Any]]:
+        try:
+            limit = int(limit)
+        except Exception:
+            limit = 200
+        limit = max(1, min(limit, 1000))
+
+        params: list[object] = []
+        where = ""
+        if after_id is not None:
+            try:
+                after_id_int = int(after_id)
+            except Exception:
+                after_id_int = 0
+            if after_id_int > 0:
+                where = "WHERE id > ?"
+                params.append(after_id_int)
+
+        params.append(limit)
+        query = f"""
+            SELECT id, created_at, level, event_type, message, agent_id, feature_id, data_json
+            FROM activity_events
+            {where}
+            ORDER BY id DESC
+            LIMIT ?
+        """
+
+        with self.get_connection() as conn:
+            cur = conn.cursor()
+            cur.execute(query, params)
+            rows = cur.fetchall()
+
+        events: list[dict[str, Any]] = []
+        for row in reversed(rows):
+            item = dict(row)
+            raw = item.get("data_json")
+            if raw:
+                try:
+                    item["data"] = json.loads(raw)
+                except Exception:
+                    item["data"] = None
+            else:
+                item["data"] = None
+            item.pop("data_json", None)
+            events.append(item)
+        return events
+
+    def clear_activity_events(self) -> int:
+        with self.get_connection() as conn:
+            cur = conn.cursor()
+            cur.execute("DELETE FROM activity_events")
+            deleted = int(cur.rowcount or 0)
+            conn.commit()
+        return deleted
+
+    def prune_activity_events(self, *, keep_days: int = 14, keep_rows: int = 5000) -> int:
+        try:
+            keep_days = int(keep_days)
+        except Exception:
+            keep_days = 14
+        try:
+            keep_rows = int(keep_rows)
+        except Exception:
+            keep_rows = 5000
+
+        keep_days = max(0, keep_days)
+        keep_rows = max(0, keep_rows)
+
+        deleted_total = 0
+        with self.get_connection() as conn:
+            cur = conn.cursor()
+
+            if keep_days > 0:
+                cur.execute(
+                    "DELETE FROM activity_events WHERE created_at < datetime('now', ?)",
+                    (f"-{keep_days} days",),
+                )
+                deleted_total += int(cur.rowcount or 0)
+
+            if keep_rows > 0:
+                cur.execute(
+                    """
+                    DELETE FROM activity_events
+                    WHERE id NOT IN (
+                        SELECT id FROM activity_events ORDER BY id DESC LIMIT ?
+                    )
+                    """,
+                    (keep_rows,),
+                )
+                deleted_total += int(cur.rowcount or 0)
+
+            conn.commit()
+
+        return deleted_total
 
     def _max_same_error_streak(self) -> int:
         raw = os.environ.get("AUTOCODER_FEATURE_MAX_SAME_ERROR_STREAK")
@@ -1364,6 +1528,31 @@ class Database:
                     """,
                     (summary, error_key, artifact_path, issue_id),
                 )
+                try:
+                    cursor.execute(
+                        """
+                        INSERT INTO activity_events (level, event_type, message, agent_id, feature_id, data_json)
+                        VALUES (?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            "WARN",
+                            "regression.issue_updated",
+                            f"Updated regression issue #{issue_id} for feature #{regression_of_id}",
+                            None,
+                            int(issue_id),
+                            json.dumps(
+                                {
+                                    "regression_of_id": int(regression_of_id),
+                                    "issue_id": int(issue_id),
+                                    "artifact_path": str(artifact_path or ""),
+                                    "error_key": str(error_key or ""),
+                                },
+                                ensure_ascii=False,
+                            ),
+                        ),
+                    )
+                except Exception:
+                    pass
                 conn.commit()
                 return {
                     "success": True,
@@ -1415,6 +1604,31 @@ class Database:
                 ),
             )
             issue_id = int(cursor.lastrowid)
+            try:
+                cursor.execute(
+                    """
+                    INSERT INTO activity_events (level, event_type, message, agent_id, feature_id, data_json)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        "WARN",
+                        "regression.issue_created",
+                        f"Created regression issue #{issue_id} for feature #{regression_of_id}",
+                        None,
+                        int(issue_id),
+                        json.dumps(
+                            {
+                                "regression_of_id": int(regression_of_id),
+                                "issue_id": int(issue_id),
+                                "artifact_path": str(artifact_path or ""),
+                                "error_key": str(error_key or ""),
+                            },
+                            ensure_ascii=False,
+                        ),
+                    ),
+                )
+            except Exception:
+                pass
             conn.commit()
             return {
                 "success": True,

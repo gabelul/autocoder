@@ -84,6 +84,8 @@ class AdvancedSettingsModel(BaseModel):
     logs_keep_files: int = Field(default=200, ge=0, le=100000)
     logs_max_total_mb: int = Field(default=200, ge=0, le=100000)
     logs_prune_artifacts: bool = False
+    activity_keep_days: int = Field(default=14, ge=0, le=3650)
+    activity_keep_rows: int = Field(default=5000, ge=0, le=200000)
 
     diagnostics_fixtures_dir: str = Field(default="", max_length=2000)
     ui_host: str = Field(default="", max_length=255)

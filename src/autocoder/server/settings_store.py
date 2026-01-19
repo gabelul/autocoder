@@ -92,6 +92,8 @@ class AdvancedSettings:
     logs_keep_files: int = 200
     logs_max_total_mb: int = 200
     logs_prune_artifacts: bool = False
+    activity_keep_days: int = 14
+    activity_keep_rows: int = 5000
 
     # Diagnostics (Web UI)
     diagnostics_fixtures_dir: str = ""
@@ -173,6 +175,8 @@ class AdvancedSettings:
             "AUTOCODER_LOGS_KEEP_FILES": str(self.logs_keep_files),
             "AUTOCODER_LOGS_MAX_TOTAL_MB": str(self.logs_max_total_mb),
             "AUTOCODER_LOGS_PRUNE_ARTIFACTS": "1" if self.logs_prune_artifacts else "0",
+            "AUTOCODER_ACTIVITY_KEEP_DAYS": str(self.activity_keep_days),
+            "AUTOCODER_ACTIVITY_KEEP_ROWS": str(self.activity_keep_rows),
             "AUTOCODER_DIAGNOSTICS_FIXTURES_DIR": str(self.diagnostics_fixtures_dir or ""),
             "AUTOCODER_UI_HOST": str(self.ui_host or ""),
             "AUTOCODER_UI_ALLOW_REMOTE": "1" if self.ui_allow_remote else "0",

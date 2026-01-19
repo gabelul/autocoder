@@ -203,6 +203,29 @@ class AgentScheduleResponse(BaseModel):
 
 
 # ============================================================================
+# Activity Schemas
+# ============================================================================
+
+class ActivityEvent(BaseModel):
+    """Mission Control activity event."""
+
+    id: int
+    created_at: str
+    level: str
+    event_type: str
+    message: str
+    agent_id: str | None = None
+    feature_id: int | None = None
+    data: dict | None = None
+
+
+class ActivityClearResponse(BaseModel):
+    """Response schema for clearing activity events."""
+
+    deleted: int = 0
+
+
+# ============================================================================
 # Setup Schemas
 # ============================================================================
 

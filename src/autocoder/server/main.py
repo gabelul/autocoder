@@ -31,6 +31,7 @@ from .routers import (
     assistant_chat_router,
     model_settings_router,
     logs_router,
+    activity_router,
     parallel_router,
     settings_router,
     generate_router,
@@ -144,6 +145,7 @@ app.include_router(filesystem_router)
 app.include_router(assistant_chat_router)
 app.include_router(model_settings_router)
 app.include_router(logs_router)
+app.include_router(activity_router)
 app.include_router(parallel_router)
 app.include_router(settings_router)
 app.include_router(generate_router)
