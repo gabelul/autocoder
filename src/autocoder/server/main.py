@@ -51,6 +51,7 @@ from .routers.devserver import devserver_websocket
 from .services.terminal_manager import cleanup_all_terminals
 from .routers.terminal import terminal_websocket
 from .schemas import SetupStatus
+from autocoder.core.cli_defaults import get_codex_cli_defaults
 from autocoder.core.port_config import get_ui_port, get_ui_cors_origins, get_ui_allow_remote
 
 
@@ -218,6 +219,8 @@ async def setup_status():
     codex_cli = shutil.which("codex") is not None
     gemini_cli = shutil.which("gemini") is not None
 
+    codex_defaults = get_codex_cli_defaults()
+
     return SetupStatus(
         claude_cli=claude_cli,
         credentials=credentials,
@@ -225,6 +228,8 @@ async def setup_status():
         npm=npm,
         codex_cli=codex_cli,
         gemini_cli=gemini_cli,
+        codex_model_default=codex_defaults.model,
+        codex_reasoning_default=codex_defaults.reasoning_effort,
         env_auth=env_auth,
         custom_api=custom_api,
         glm_mode=glm_mode,

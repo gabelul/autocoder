@@ -16,6 +16,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
 from autocoder.agent.retry import execute_with_retry_sync, retry_config_from_env
+from autocoder.core.cli_defaults import get_codex_cli_defaults
 
 
 Kind = Literal["spec", "plan"]
@@ -184,8 +185,9 @@ def _run_codex(prompt: str, cfg: MultiModelGenerateConfig, *, workdir: Path) -> 
         return False, "", "codex not found"
     if _breaker_is_open("codex"):
         return False, "", "codex circuit breaker open"
-    model = cfg.codex_model or "gpt-5.2"
-    reasoning = cfg.codex_reasoning_effort or "high"
+    defaults = get_codex_cli_defaults()
+    model = (cfg.codex_model or "").strip() or defaults.model or "gpt-5.2"
+    reasoning = (cfg.codex_reasoning_effort or "").strip() or defaults.reasoning_effort or "high"
     retry_cfg = retry_config_from_env(prefix="AUTOCODER_SDK_")
 
     def attempt() -> tuple[str, str]:

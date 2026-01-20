@@ -13,6 +13,7 @@ from typing import Any, Literal
 
 from .base import ReviewConfig, ReviewFinding, ReviewResult, Reviewer
 from autocoder.agent.retry import execute_with_retry_sync, retry_config_from_env
+from autocoder.core.cli_defaults import get_codex_cli_defaults
 
 
 ConsensusMode = Literal["majority", "all", "any"]
@@ -210,8 +211,19 @@ class MultiCliReviewer(Reviewer):
             return True, "", "codex not found; skipped"
         if _breaker_is_open("codex"):
             return True, "", "codex circuit breaker open; skipped"
-        model = self.cfg.codex_model or os.environ.get("AUTOCODER_CODEX_MODEL") or "gpt-5.2"
-        reasoning = self.cfg.codex_reasoning_effort or os.environ.get("AUTOCODER_CODEX_REASONING_EFFORT") or "high"
+        defaults = get_codex_cli_defaults()
+        model = (
+            (self.cfg.codex_model or "").strip()
+            or (os.environ.get("AUTOCODER_CODEX_MODEL") or "").strip()
+            or defaults.model
+            or "gpt-5.2"
+        )
+        reasoning = (
+            (self.cfg.codex_reasoning_effort or "").strip()
+            or (os.environ.get("AUTOCODER_CODEX_REASONING_EFFORT") or "").strip()
+            or defaults.reasoning_effort
+            or "high"
+        )
         cfg = retry_config_from_env(prefix="AUTOCODER_SDK_")
 
         def attempt() -> tuple[str, str]:

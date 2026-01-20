@@ -22,7 +22,7 @@ ReviewMode = Literal["off", "advisory", "gate"]
 ReviewType = Literal["none", "command", "claude", "multi_cli"]
 WorkerProvider = Literal["claude", "codex_cli", "gemini_cli", "multi_cli"]
 PlannerSynthesizer = Literal["none", "claude", "codex", "gemini"]
-CodexReasoningEffort = Literal["low", "medium", "high"]
+CodexReasoningEffort = Literal["low", "medium", "high", "xlow", "xmedium", "xhigh"]
 ReviewConsensus = Literal["any", "majority", "all"]
 InitializerProvider = Literal["claude", "codex_cli", "gemini_cli", "multi_cli"]
 InitializerSynthesizer = Literal["none", "claude", "codex", "gemini"]
@@ -40,7 +40,7 @@ class AdvancedSettingsModel(BaseModel):
     # Blank means "use default" for the configured reviewer type.
     review_consensus: str = Field(default="", max_length=64)
     codex_model: str = Field(default="", max_length=128)
-    codex_reasoning_effort: str = Field(default="", max_length=64)  # low|medium|high
+    codex_reasoning_effort: str = Field(default="", max_length=64)  # low|medium|high|xhigh
     gemini_model: str = Field(default="", max_length=128)
 
     locks_enabled: bool = False
@@ -127,8 +127,8 @@ class AdvancedSettingsModel(BaseModel):
                 if self.review_consensus and self.review_consensus not in ("any", "majority", "all"):
                     raise ValueError("review_consensus must be any|majority|all (or blank)")
 
-        if self.codex_reasoning_effort and self.codex_reasoning_effort not in ("low", "medium", "high"):
-            raise ValueError("codex_reasoning_effort must be low|medium|high (or blank)")
+        if self.codex_reasoning_effort and self.codex_reasoning_effort not in ("low", "medium", "high", "xlow", "xmedium", "xhigh"):
+            raise ValueError("codex_reasoning_effort must be low|medium|high|xlow|xmedium|xhigh (or blank)")
 
         # Worker conditionals
         if self.worker_provider == "multi_cli" and not (self.worker_patch_agents or "").strip():

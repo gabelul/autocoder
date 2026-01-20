@@ -33,6 +33,7 @@ import tempfile
 from datetime import datetime
 from pathlib import Path
 
+from autocoder.core.cli_defaults import get_codex_cli_defaults
 from autocoder.core.database import get_database
 from autocoder.core.knowledge_files import build_knowledge_bundle
 
@@ -282,8 +283,13 @@ def _implement_prompt(*, repo: Path, provider: str, feature: dict, files: list[s
 def _run_codex(repo: Path, *, prompt: str, timeout_s: int) -> tuple[bool, str, str]:
     if shutil.which("codex") is None:
         return False, "", "codex not found"
-    model = os.environ.get("AUTOCODER_CODEX_MODEL") or "gpt-5.2"
-    reasoning = os.environ.get("AUTOCODER_CODEX_REASONING_EFFORT") or "high"
+    defaults = get_codex_cli_defaults()
+    model = (os.environ.get("AUTOCODER_CODEX_MODEL") or "").strip() or defaults.model or "gpt-5.2"
+    reasoning = (
+        (os.environ.get("AUTOCODER_CODEX_REASONING_EFFORT") or "").strip()
+        or defaults.reasoning_effort
+        or "high"
+    )
 
     schema = {
         "type": "object",

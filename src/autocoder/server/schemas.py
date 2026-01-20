@@ -237,6 +237,8 @@ class SetupStatus(BaseModel):
     npm: bool
     codex_cli: bool = False
     gemini_cli: bool = False
+    codex_model_default: str | None = None
+    codex_reasoning_default: str | None = None
     env_auth: bool = False
     custom_api: bool = False
     glm_mode: bool = False
