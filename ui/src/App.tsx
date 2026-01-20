@@ -880,7 +880,7 @@ function App() {
           <AssistantFAB
             onClick={() => setAssistantOpen(!assistantOpen)}
             isOpen={assistantOpen}
-            bottomOffsetPx={(debugOpen ? debugPanelHeight : 56) + 24}
+            bottomOffsetPx={(debugOpen ? debugPanelHeight : 80) + 24}
           />
           <AssistantPanel
             projectName={selectedProject}

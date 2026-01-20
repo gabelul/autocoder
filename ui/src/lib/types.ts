@@ -159,6 +159,8 @@ export interface SetupStatus {
   npm: boolean
   codex_cli?: boolean
   gemini_cli?: boolean
+  codex_model_default?: string | null
+  codex_reasoning_default?: string | null
   env_auth?: boolean
   custom_api?: boolean
   glm_mode?: boolean

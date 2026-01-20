@@ -148,7 +148,7 @@ export function ModelSettingsContent({
                 key={id}
                 onClick={() => handlePresetChange(id)}
                 className={`
-                  neo-card p-3 text-left transition-all
+                  neo-card p-3 text-left transition-colors duration-200
                   ${selectedPreset === id ? 'ring-4 ring-[var(--color-neo-accent)] shadow-neo-lg' : ''}
                 `}
               >

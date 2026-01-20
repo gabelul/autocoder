@@ -7,8 +7,9 @@
  */
 
 import { useEffect, useMemo, useState } from 'react'
-import { Save, RotateCcw, SlidersHorizontal } from 'lucide-react'
+import { Info, Save, RotateCcw, SlidersHorizontal } from 'lucide-react'
 import { useAdvancedSettings, useUpdateAdvancedSettings } from '../hooks/useAdvancedSettings'
+import { useSetupStatus } from '../hooks/useProjects'
 import type { AdvancedSettings } from '../lib/types'
 
 function clampInt(v: number, min: number, max: number): number {
@@ -90,6 +91,7 @@ const DEFAULTS: AdvancedSettings = {
 export function AdvancedSettingsContent() {
   const { data, isLoading } = useAdvancedSettings()
   const update = useUpdateAdvancedSettings()
+  const { data: setupStatus } = useSetupStatus()
 
   const [draft, setDraft] = useState<AdvancedSettings>(DEFAULTS)
   const [tab, setTab] = useState<'automation' | 'gatekeeper' | 'logs' | 'retry' | 'ports' | 'ui'>('automation')
@@ -131,8 +133,11 @@ export function AdvancedSettingsContent() {
       if (draft.review_type !== 'none') addWarning('review_type', 'Review is disabled; type is ignored')
     }
 
-    if (draft.codex_reasoning_effort.trim() && !['low', 'medium', 'high'].includes(draft.codex_reasoning_effort.trim()))
-      addError('codex_reasoning_effort', 'Codex reasoning must be low, medium, or high')
+    if (
+      draft.codex_reasoning_effort.trim() &&
+      !['low', 'medium', 'high', 'xlow', 'xmedium', 'xhigh'].includes(draft.codex_reasoning_effort.trim())
+    )
+      addError('codex_reasoning_effort', 'Codex reasoning must be low|medium|high|xlow|xmedium|xhigh (or blank)')
 
     if (draft.worker_provider === 'multi_cli' && !draft.worker_patch_agents.trim())
       addError('worker_patch_agents', 'Patch provider order is required for multi_cli')
@@ -152,6 +157,9 @@ export function AdvancedSettingsContent() {
       addWarning('initializer_enqueue_count', 'Stage threshold is set but enqueue count is 0 (backlog will never start)')
 
     if (draft.allow_no_tests) addWarning('allow_no_tests', 'Allow No Tests can merge without verification (recommended only for YOLO)')
+    if (!draft.require_gatekeeper) addWarning('require_gatekeeper', 'Gatekeeper is disabled; merges may happen without deterministic verification')
+    if (!draft.worker_verify) addWarning('worker_verify', 'Worker verify is disabled; workers can self-attest without Gatekeeper')
+    if (!draft.locks_enabled) addWarning('locks_enabled', 'File locks are disabled; multiple runs can overlap in the same project')
     if (draft.ui_allow_remote && !draft.ui_host.trim())
       addWarning('ui_host', 'Set UI bind host (e.g. 0.0.0.0) to allow LAN access')
 
@@ -159,8 +167,57 @@ export function AdvancedSettingsContent() {
     if (!isHexColor(draft.agent_color_done)) addError('agent_color_done', 'Done color must be a 6-digit hex (e.g. #70e000)')
     if (!isHexColor(draft.agent_color_retry)) addError('agent_color_retry', 'Retry color must be a 6-digit hex (e.g. #f59e0b)')
 
+    if (setupStatus) {
+      const hasCodex = Boolean(setupStatus.codex_cli)
+      const hasGemini = Boolean(setupStatus.gemini_cli)
+
+      const textHas = (s: string, needle: string) => s.toLowerCase().includes(needle)
+      const needsCodex =
+        draft.worker_provider === 'codex_cli' ||
+        draft.qa_subagent_provider === 'codex_cli' ||
+        draft.initializer_provider === 'codex_cli' ||
+        (draft.review_enabled && draft.review_type === 'multi_cli' && textHas(draft.review_agents, 'codex')) ||
+        textHas(draft.worker_patch_agents, 'codex') ||
+        textHas(draft.qa_subagent_agents, 'codex') ||
+        (draft.planner_enabled && textHas(draft.planner_agents, 'codex')) ||
+        textHas(draft.initializer_agents, 'codex')
+
+      const needsGemini =
+        draft.worker_provider === 'gemini_cli' ||
+        draft.qa_subagent_provider === 'gemini_cli' ||
+        draft.initializer_provider === 'gemini_cli' ||
+        (draft.review_enabled && draft.review_type === 'multi_cli' && textHas(draft.review_agents, 'gemini')) ||
+        textHas(draft.worker_patch_agents, 'gemini') ||
+        textHas(draft.qa_subagent_agents, 'gemini') ||
+        (draft.planner_enabled && textHas(draft.planner_agents, 'gemini')) ||
+        textHas(draft.initializer_agents, 'gemini')
+
+      if (needsCodex && !hasCodex) addWarning('codex_model', 'Codex CLI not detected on PATH; Codex steps will be skipped/disabled')
+      if (needsGemini && !hasGemini) addWarning('gemini_model', 'Gemini CLI not detected on PATH; Gemini steps will be skipped/disabled')
+      if (draft.worker_provider === 'multi_cli' && !hasCodex && !hasGemini)
+        addWarning('worker_provider', 'Multi-CLI selected, but neither Codex nor Gemini CLIs were detected')
+    }
+
     return { errors, warnings, fieldErrors, fieldWarnings }
-  }, [draft])
+  }, [draft, setupStatus])
+
+  const labelProvider = (v: string) =>
+    v === 'claude'
+      ? 'Claude (Agent SDK)'
+      : v === 'codex_cli'
+        ? 'Codex CLI'
+        : v === 'gemini_cli'
+          ? 'Gemini CLI'
+          : v === 'multi_cli'
+            ? 'Multi-CLI (Codex + Gemini)'
+            : v
+
+  const labelReviewType = (v: string) =>
+    v === 'none' ? 'None' : v === 'command' ? 'Command' : v === 'claude' ? 'Claude' : v === 'multi_cli' ? 'Multi-CLI' : v
+
+  const labelReviewMode = (v: string) => (v === 'off' ? 'Off' : v === 'advisory' ? 'Advisory' : v === 'gate' ? 'Gate' : v)
+
+  const showSetupWarning = Boolean(setupStatus && (!setupStatus.codex_cli || !setupStatus.gemini_cli))
 
   const saveDisabled = isLoading || update.isPending || validation.errors.length > 0
 
@@ -267,8 +324,25 @@ export function AdvancedSettingsContent() {
         <>
           {tab === 'automation' && (
             <div className="space-y-4">
+              {showSetupWarning && (
+                <div className="neo-card p-4 bg-yellow-500/10 border-yellow-600">
+                  <div className="font-display font-bold text-yellow-900">Some CLIs are missing</div>
+                  <div className="text-sm text-[var(--color-neo-text-secondary)] mt-1">
+                    Codex/Gemini-powered features will be disabled or skipped until the CLI is installed and on your PATH.
+                  </div>
+                </div>
+              )}
               <div className="neo-card p-4">
-                <div className="font-display font-bold uppercase mb-3">Review</div>
+                <div className="flex items-center gap-2 mb-3">
+                  <div className="font-display font-bold uppercase">Review</div>
+                  <span
+                    className="inline-flex"
+                    title="Optional post-test review step in Gatekeeper. Advisory records findings; Gate blocks merge on rejection."
+                    aria-label="Help"
+                  >
+                    <Info size={16} className="text-[var(--color-neo-text-secondary)]" aria-hidden="true" />
+                  </span>
+                </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   <label className="neo-card p-3 flex items-center justify-between cursor-pointer">
                     <span className="font-display font-bold text-sm">Enable review</span>
@@ -287,14 +361,21 @@ export function AdvancedSettingsContent() {
                       onChange={(e) => setDraft({ ...draft, review_mode: e.target.value as AdvancedSettings['review_mode'] })}
                       className="neo-btn text-sm py-2 px-3 bg-white border-3 border-[var(--color-neo-border)] font-display w-full"
                     >
-                      <option value="off">off</option>
-                      <option value="advisory">advisory</option>
-                      <option value="gate">gate</option>
+                      <option value="off">{labelReviewMode('off')}</option>
+                      <option value="advisory">{labelReviewMode('advisory')}</option>
+                      <option value="gate">{labelReviewMode('gate')}</option>
                     </select>
                     {validation.fieldErrors.review_mode && <div className="text-xs mt-1 text-[var(--color-neo-danger)]">{validation.fieldErrors.review_mode}</div>}
                     {!validation.fieldErrors.review_mode && validation.fieldWarnings.review_mode && (
                       <div className="text-xs mt-1 text-yellow-800">{validation.fieldWarnings.review_mode}</div>
                     )}
+                    <div className="text-xs text-[var(--color-neo-text-secondary)] mt-2">
+                      {draft.review_mode === 'off'
+                        ? 'Off: don’t run the reviewer.'
+                        : draft.review_mode === 'advisory'
+                          ? 'Advisory: run reviewer + store findings, but don’t block merge.'
+                          : 'Gate: block merge if reviewer rejects.'}
+                    </div>
                   </div>
 
                   <div className="neo-card p-3">
@@ -304,15 +385,24 @@ export function AdvancedSettingsContent() {
                       onChange={(e) => setDraft({ ...draft, review_type: e.target.value as AdvancedSettings['review_type'] })}
                       className="neo-btn text-sm py-2 px-3 bg-white border-3 border-[var(--color-neo-border)] font-display w-full"
                     >
-                      <option value="none">none</option>
-                      <option value="command">command</option>
-                      <option value="claude">claude</option>
-                      <option value="multi_cli">multi_cli</option>
+                      <option value="none">{labelReviewType('none')}</option>
+                      <option value="command">{labelReviewType('command')}</option>
+                      <option value="claude">{labelReviewType('claude')}</option>
+                      <option value="multi_cli">{labelReviewType('multi_cli')}</option>
                     </select>
                     {validation.fieldErrors.review_type && <div className="text-xs mt-1 text-[var(--color-neo-danger)]">{validation.fieldErrors.review_type}</div>}
                     {!validation.fieldErrors.review_type && validation.fieldWarnings.review_type && (
                       <div className="text-xs mt-1 text-yellow-800">{validation.fieldWarnings.review_type}</div>
                     )}
+                    <div className="text-xs text-[var(--color-neo-text-secondary)] mt-2">
+                      {draft.review_type === 'command'
+                        ? 'Command: run a verification command and treat non-zero exit as rejection.'
+                        : draft.review_type === 'claude'
+                          ? 'Claude: AI review of the staged diff.'
+                          : draft.review_type === 'multi_cli'
+                            ? 'Multi-CLI: Codex/Gemini review of the staged diff (skips missing CLIs).'
+                            : 'None: no reviewer selected.'}
+                    </div>
                   </div>
 
                   <Field label="Timeout (s)" value={draft.review_timeout_s} onChange={(v) => setDraft({ ...draft, review_timeout_s: clampInt(v, 0, 3600) })} />
@@ -344,16 +434,45 @@ export function AdvancedSettingsContent() {
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mt-3">
-                  <TextField label="Codex model" value={draft.codex_model} onChange={(v) => setDraft({ ...draft, codex_model: v })} placeholder="e.g. gpt-5.2" />
                   <TextField
-                    label="Codex reasoning"
+                    label="Codex CLI model (optional)"
+                    value={draft.codex_model}
+                    onChange={(v) => setDraft({ ...draft, codex_model: v })}
+                    placeholder="Leave blank to use Codex CLI defaults"
+                    warning={validation.fieldWarnings.codex_model}
+                    disabled={setupStatus ? !setupStatus.codex_cli : false}
+                  />
+                  <TextField
+                    label="Codex reasoning (optional)"
                     value={draft.codex_reasoning_effort}
                     onChange={(v) => setDraft({ ...draft, codex_reasoning_effort: v })}
-                    placeholder="low|medium|high"
+                    placeholder="low|medium|high|xhigh"
                     error={validation.fieldErrors.codex_reasoning_effort}
+                    disabled={setupStatus ? !setupStatus.codex_cli : false}
                   />
-                  <TextField label="Gemini model" value={draft.gemini_model} onChange={(v) => setDraft({ ...draft, gemini_model: v })} placeholder="e.g. gemini-3-pro-preview" />
+                  <TextField
+                    label="Gemini CLI model (optional)"
+                    value={draft.gemini_model}
+                    onChange={(v) => setDraft({ ...draft, gemini_model: v })}
+                    placeholder="Leave blank to use Gemini CLI defaults"
+                    warning={validation.fieldWarnings.gemini_model}
+                    disabled={setupStatus ? !setupStatus.gemini_cli : false}
+                  />
                 </div>
+
+                {setupStatus?.codex_cli &&
+                  (!draft.codex_model.trim() || !draft.codex_reasoning_effort.trim()) &&
+                  (setupStatus.codex_model_default || setupStatus.codex_reasoning_default) && (
+                    <div className="text-xs text-[var(--color-neo-text-secondary)] mt-2">
+                      Detected Codex defaults:{' '}
+                      {setupStatus.codex_model_default ? (
+                        <span className="font-mono">model={setupStatus.codex_model_default}</span>
+                      ) : null}
+                      {setupStatus.codex_reasoning_default ? (
+                        <span className="font-mono ml-2">reasoning={setupStatus.codex_reasoning_default}</span>
+                      ) : null}
+                    </div>
+                  )}
 
                 <div className="text-xs text-[var(--color-neo-text-secondary)] mt-2">
                   Tip: set mode to <span className="font-mono">gate</span> to block merges when review fails.
@@ -361,7 +480,16 @@ export function AdvancedSettingsContent() {
               </div>
 
               <div className="neo-card p-4">
-                <div className="font-display font-bold uppercase mb-3">Locks + Verification</div>
+                <div className="flex items-center gap-2 mb-3">
+                  <div className="font-display font-bold uppercase">Locks + Verification</div>
+                  <span
+                    className="inline-flex"
+                    title="File locks prevent multiple orchestrators from colliding in the same project. Worker verify forces features through Gatekeeper (tests + merge)."
+                    aria-label="Help"
+                  >
+                    <Info size={16} className="text-[var(--color-neo-text-secondary)]" aria-hidden="true" />
+                  </span>
+                </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   <label className="neo-card p-3 flex items-center justify-between cursor-pointer">
                     <span className="font-display font-bold text-sm">Enable file locks</span>
@@ -371,6 +499,9 @@ export function AdvancedSettingsContent() {
                     <span className="font-display font-bold text-sm">Worker verify (Gatekeeper)</span>
                     <input type="checkbox" checked={draft.worker_verify} onChange={(e) => setDraft({ ...draft, worker_verify: e.target.checked })} className="w-5 h-5" />
                   </label>
+                </div>
+                <div className="text-xs text-[var(--color-neo-text-secondary)] mt-2">
+                  If you’re running parallel agents, keep both enabled unless you’re debugging something very specific.
                 </div>
               </div>
 
@@ -402,11 +533,23 @@ export function AdvancedSettingsContent() {
                       onChange={(e) => setDraft({ ...draft, worker_provider: e.target.value as AdvancedSettings['worker_provider'] })}
                       className="neo-btn text-sm py-2 px-3 bg-white border-3 border-[var(--color-neo-border)] font-display w-full"
                     >
-                      <option value="claude">claude (Claude Agent SDK)</option>
-                      <option value="codex_cli">codex_cli (patch worker)</option>
-                      <option value="gemini_cli">gemini_cli (patch worker)</option>
-                      <option value="multi_cli">multi_cli (patch worker)</option>
+                      <option value="claude">{labelProvider('claude')}</option>
+                      <option value="codex_cli" disabled={setupStatus ? !setupStatus.codex_cli : false}>
+                        {labelProvider('codex_cli')}
+                      </option>
+                      <option value="gemini_cli" disabled={setupStatus ? !setupStatus.gemini_cli : false}>
+                        {labelProvider('gemini_cli')}
+                      </option>
+                      <option
+                        value="multi_cli"
+                        disabled={setupStatus ? !setupStatus.codex_cli && !setupStatus.gemini_cli : false}
+                      >
+                        {labelProvider('multi_cli')}
+                      </option>
                     </select>
+                    {validation.fieldWarnings.worker_provider && (
+                      <div className="text-xs mt-2 text-yellow-800">{validation.fieldWarnings.worker_provider}</div>
+                    )}
                     <div className="text-xs text-[var(--color-neo-text-secondary)] mt-2">
                       Patch workers implement features by generating unified diffs, then Gatekeeper verifies deterministically.
                     </div>
@@ -433,9 +576,12 @@ export function AdvancedSettingsContent() {
                 </div>
               </div>
 
-              <div className="neo-card p-4">
-                <div className="font-display font-bold uppercase mb-3">QA + Controller</div>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <details
+                className="neo-card p-4"
+                open={draft.qa_fix_enabled || draft.qa_subagent_enabled || draft.controller_enabled}
+              >
+                <summary className="font-display font-bold uppercase cursor-pointer select-none">QA + Controller</summary>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-3">
                   <label className="neo-card p-3 flex items-center justify-between cursor-pointer">
                     <span className="font-display font-bold text-sm">QA auto-fix</span>
                     <input type="checkbox" checked={draft.qa_fix_enabled} onChange={(e) => setDraft({ ...draft, qa_fix_enabled: e.target.checked })} className="w-5 h-5" />
@@ -466,10 +612,19 @@ export function AdvancedSettingsContent() {
                           onChange={(e) => setDraft({ ...draft, qa_subagent_provider: e.target.value as AdvancedSettings['qa_subagent_provider'] })}
                           className="neo-btn text-sm py-2 px-3 bg-white border-3 border-[var(--color-neo-border)] font-display w-full"
                         >
-                          <option value="claude">claude</option>
-                          <option value="codex_cli">codex_cli</option>
-                          <option value="gemini_cli">gemini_cli</option>
-                          <option value="multi_cli">multi_cli</option>
+                          <option value="claude">{labelProvider('claude')}</option>
+                          <option value="codex_cli" disabled={setupStatus ? !setupStatus.codex_cli : false}>
+                            {labelProvider('codex_cli')}
+                          </option>
+                          <option value="gemini_cli" disabled={setupStatus ? !setupStatus.gemini_cli : false}>
+                            {labelProvider('gemini_cli')}
+                          </option>
+                          <option
+                            value="multi_cli"
+                            disabled={setupStatus ? !setupStatus.codex_cli && !setupStatus.gemini_cli : false}
+                          >
+                            {labelProvider('multi_cli')}
+                          </option>
                         </select>
                       </div>
                       <TextField
@@ -495,11 +650,11 @@ export function AdvancedSettingsContent() {
                   <Field label="Controller max sessions" value={draft.controller_max_sessions} onChange={(v) => setDraft({ ...draft, controller_max_sessions: clampInt(v, 0, 50) })} />
                   <TextField label="Controller model" value={draft.controller_model} onChange={(v) => setDraft({ ...draft, controller_model: v })} placeholder="e.g. haiku" />
                 </div>
-              </div>
+              </details>
 
-              <div className="neo-card p-4">
-                <div className="font-display font-bold uppercase mb-3">Regression Pool</div>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <details className="neo-card p-4" open={draft.regression_pool_enabled}>
+                <summary className="font-display font-bold uppercase cursor-pointer select-none">Regression Pool</summary>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-3">
                   <label className="neo-card p-3 flex items-center justify-between cursor-pointer">
                     <span className="font-display font-bold text-sm">Enable regression testers</span>
                     <input
@@ -536,11 +691,11 @@ export function AdvancedSettingsContent() {
                   Spawns short-lived Claude+Playwright testers when there are no claimable pending features. On failure,
                   it creates a new <span className="font-mono">REGRESSION</span> feature linked to the original passing feature.
                 </div>
-              </div>
+              </details>
 
-              <div className="neo-card p-4">
-                <div className="font-display font-bold uppercase mb-3">Planner</div>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <details className="neo-card p-4" open={draft.planner_enabled}>
+                <summary className="font-display font-bold uppercase cursor-pointer select-none">Planner</summary>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-3">
                   <label className="neo-card p-3 flex items-center justify-between cursor-pointer">
                     <span className="font-display font-bold text-sm">Feature plan (multi-model)</span>
                     <input
@@ -586,11 +741,11 @@ export function AdvancedSettingsContent() {
                   Generates a short implementation plan per feature and prepends it to the worker prompt. Uses Codex/Gemini CLIs
                   when available, with optional Claude synthesis.
                 </div>
-              </div>
+              </details>
 
-              <div className="neo-card p-4">
-                <div className="font-display font-bold uppercase mb-3">Initializer</div>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <details className="neo-card p-4" open={draft.initializer_provider !== 'claude'}>
+                <summary className="font-display font-bold uppercase cursor-pointer select-none">Initializer</summary>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-3">
                   <div className="neo-card p-3">
                     <div className="text-xs font-mono text-[var(--color-neo-text-secondary)] mb-1">Provider</div>
                     <select
@@ -598,10 +753,19 @@ export function AdvancedSettingsContent() {
                       onChange={(e) => setDraft({ ...draft, initializer_provider: e.target.value as AdvancedSettings['initializer_provider'] })}
                       className="neo-btn text-sm py-2 px-3 bg-white border-3 border-[var(--color-neo-border)] font-display w-full"
                     >
-                      <option value="claude">claude (Claude Agent SDK)</option>
-                      <option value="codex_cli">codex_cli</option>
-                      <option value="gemini_cli">gemini_cli</option>
-                      <option value="multi_cli">multi_cli</option>
+                      <option value="claude">{labelProvider('claude')}</option>
+                      <option value="codex_cli" disabled={setupStatus ? !setupStatus.codex_cli : false}>
+                        {labelProvider('codex_cli')}
+                      </option>
+                      <option value="gemini_cli" disabled={setupStatus ? !setupStatus.gemini_cli : false}>
+                        {labelProvider('gemini_cli')}
+                      </option>
+                      <option
+                        value="multi_cli"
+                        disabled={setupStatus ? !setupStatus.codex_cli && !setupStatus.gemini_cli : false}
+                      >
+                        {labelProvider('multi_cli')}
+                      </option>
                     </select>
                   </div>
                   <TextField
@@ -644,13 +808,22 @@ export function AdvancedSettingsContent() {
                   Controls the initial feature backlog generation. Large backlogs get staged and only the top
                   <span className="font-mono"> enqueue_count</span> are enabled.
                 </div>
-              </div>
+              </details>
             </div>
           )}
 
           {tab === 'gatekeeper' && (
             <div className="neo-card p-4">
-              <div className="font-display font-bold uppercase mb-3">Gatekeeper</div>
+              <div className="flex items-center gap-2 mb-3">
+                <div className="font-display font-bold uppercase">Gatekeeper</div>
+                <span
+                  className="inline-flex"
+                  title="Gatekeeper is the deterministic merge gate: it runs verification commands in a clean temp worktree and only then updates main."
+                  aria-label="Help"
+                >
+                  <Info size={16} className="text-[var(--color-neo-text-secondary)]" aria-hidden="true" />
+                </span>
+              </div>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 <label className="neo-card p-3 flex items-center justify-between cursor-pointer">
                   <span className="font-display font-bold text-sm">Require Gatekeeper</span>
@@ -670,6 +843,14 @@ export function AdvancedSettingsContent() {
                     className="w-5 h-5"
                   />
                 </label>
+              </div>
+              <div className="text-xs text-[var(--color-neo-text-secondary)] mt-2">
+                <div>
+                  <span className="font-display font-semibold">Require Gatekeeper</span>: recommended. Disabling it removes the deterministic merge gate.
+                </div>
+                <div className="mt-1">
+                  <span className="font-display font-semibold">Allow No Tests</span>: only use if you explicitly want merges to proceed when no test command exists (YOLO vibes).
+                </div>
               </div>
             </div>
           )}
@@ -828,12 +1009,14 @@ function Field({
   onChange,
   error,
   warning,
+  disabled,
 }: {
   label: string
   value: number
   onChange: (v: number) => void
   error?: string
   warning?: string
+  disabled?: boolean
 }) {
   const border =
     error ? 'border-[var(--color-neo-danger)]' : warning ? 'border-yellow-600' : 'border-[var(--color-neo-border)]'
@@ -844,7 +1027,10 @@ function Field({
         type="number"
         value={value}
         onChange={(e) => onChange(Number(e.target.value))}
-        className={`neo-btn text-sm py-2 px-3 bg-white border-3 ${border} font-mono w-full`}
+        disabled={disabled}
+        className={`neo-btn text-sm py-2 px-3 bg-white border-3 ${border} font-mono w-full ${
+          disabled ? 'opacity-60 cursor-not-allowed' : ''
+        }`}
       />
       {error && <div className="text-xs mt-1 text-[var(--color-neo-danger)]">{error}</div>}
       {!error && warning && <div className="text-xs mt-1 text-yellow-800">{warning}</div>}
@@ -859,6 +1045,7 @@ function TextField({
   placeholder,
   error,
   warning,
+  disabled,
 }: {
   label: string
   value: string
@@ -866,6 +1053,7 @@ function TextField({
   placeholder?: string
   error?: string
   warning?: string
+  disabled?: boolean
 }) {
   const border =
     error ? 'border-[var(--color-neo-danger)]' : warning ? 'border-yellow-600' : 'border-[var(--color-neo-border)]'
@@ -877,7 +1065,10 @@ function TextField({
         value={value}
         placeholder={placeholder}
         onChange={(e) => onChange(e.target.value)}
-        className={`neo-btn text-sm py-2 px-3 bg-white border-3 ${border} font-mono w-full`}
+        disabled={disabled}
+        className={`neo-btn text-sm py-2 px-3 bg-white border-3 ${border} font-mono w-full ${
+          disabled ? 'opacity-60 cursor-not-allowed' : ''
+        }`}
       />
       {error && <div className="text-xs mt-1 text-[var(--color-neo-danger)]">{error}</div>}
       {!error && warning && <div className="text-xs mt-1 text-yellow-800">{warning}</div>}

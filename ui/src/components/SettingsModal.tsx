@@ -126,7 +126,7 @@ export function SettingsModal({
                 return (
                   <button
                     key={opt.id}
-                    className={`neo-card p-4 text-left transition-all ${
+                    className={`neo-card p-4 text-left transition-colors duration-200 ${
                       active ? 'ring-4 ring-[var(--color-neo-accent)] shadow-neo-lg' : ''
                     } ${disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
                     disabled={disabled}

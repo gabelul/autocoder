@@ -21,7 +21,7 @@ export function AssistantFAB({ onClick, isOpen, bottomOffsetPx }: AssistantFABPr
         bg-[var(--color-neo-progress)] text-[var(--color-neo-text-on-bright)]
         border-3 border-[var(--color-neo-border)]
         shadow-neo-md
-        transition-all duration-200
+        transition-shadow duration-200
         hover:shadow-neo-lg
         active:shadow-neo-sm
         ${isOpen ? 'rotate-0' : ''}

@@ -100,8 +100,9 @@
   /* -------------------------------------------------------------------------
      Transitions
      ------------------------------------------------------------------------- */
-  --transition-neo-fast: 0.15s cubic-bezier(0.34, 1.56, 0.64, 1);
-  --transition-neo-normal: 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+  /* Softer (less "bouncy") transitions for an approachable neo-brutal feel. */
+  --transition-neo-fast: 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+  --transition-neo-normal: 0.25s cubic-bezier(0.4, 0, 0.2, 1);
 
   /* Transition timing */
   --transition-fast: 150ms;

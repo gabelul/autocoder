@@ -200,14 +200,14 @@ export function SettingsPage({
           <div className="font-display font-bold uppercase mb-3">Applies next start</div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             <button
-              className={`neo-card p-4 text-left transition-all cursor-pointer ${runSettings.mode === 'standard' ? 'ring-4 ring-[var(--color-neo-accent)]' : ''}`}
+              className={`neo-card p-4 text-left transition-colors duration-200 cursor-pointer ${runSettings.mode === 'standard' ? 'ring-4 ring-[var(--color-neo-accent)]' : ''}`}
               onClick={() => onChangeRunSettings({ ...runSettings, mode: 'standard' })}
             >
               <div className="font-display font-bold uppercase">Standard</div>
               <div className="text-sm text-[var(--color-neo-text-secondary)] mt-1">Single agent run.</div>
             </button>
             <button
-              className={`neo-card p-4 text-left transition-all ${runSettings.mode === 'parallel' ? 'ring-4 ring-[var(--color-neo-accent)]' : ''} ${
+              className={`neo-card p-4 text-left transition-colors duration-200 ${runSettings.mode === 'parallel' ? 'ring-4 ring-[var(--color-neo-accent)]' : ''} ${
                 canUseParallel ? 'cursor-pointer' : 'opacity-50 cursor-not-allowed'
               }`}
               disabled={!canUseParallel}
