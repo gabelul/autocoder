@@ -43,7 +43,7 @@ class AdvancedSettingsModel(BaseModel):
     codex_reasoning_effort: str = Field(default="", max_length=64)  # low|medium|high|xhigh
     gemini_model: str = Field(default="", max_length=128)
 
-    locks_enabled: bool = False
+    locks_enabled: bool = True
     worker_verify: bool = True
     worker_provider: WorkerProvider = Field(default="claude")
     worker_patch_max_iterations: int = Field(default=2, ge=1, le=20)
@@ -113,6 +113,22 @@ class AdvancedSettingsModel(BaseModel):
 
     @model_validator(mode="after")
     def _validate_conditionals(self):
+        def _normalize_agents_csv(field_label: str, raw: str) -> str:
+            if not raw or not raw.strip():
+                return ""
+            parts = [p.strip().lower() for p in raw.replace(";", ",").split(",") if p.strip()]
+            allowed = {"codex", "gemini"}
+            unknown = [p for p in parts if p not in allowed]
+            if unknown:
+                raise ValueError(f"{field_label} must be a csv of codex,gemini (unknown: {', '.join(unknown)})")
+            seen: set[str] = set()
+            out: list[str] = []
+            for p in parts:
+                if p in allowed and p not in seen:
+                    seen.add(p)
+                    out.append(p)
+            return ",".join(out)
+
         # Review conditionals
         if self.review_enabled:
             if self.review_mode == "off":
@@ -124,6 +140,7 @@ class AdvancedSettingsModel(BaseModel):
             if self.review_type == "multi_cli":
                 if not (self.review_agents or "").strip():
                     raise ValueError("review_agents is required when review_type=multi_cli")
+                self.review_agents = _normalize_agents_csv("review_agents", self.review_agents)
                 if self.review_consensus and self.review_consensus not in ("any", "majority", "all"):
                     raise ValueError("review_consensus must be any|majority|all (or blank)")
 
@@ -133,15 +150,21 @@ class AdvancedSettingsModel(BaseModel):
         # Worker conditionals
         if self.worker_provider == "multi_cli" and not (self.worker_patch_agents or "").strip():
             raise ValueError("worker_patch_agents is required when worker_provider=multi_cli")
+        if self.worker_provider == "multi_cli":
+            self.worker_patch_agents = _normalize_agents_csv("worker_patch_agents", self.worker_patch_agents)
 
         # QA sub-agent conditionals
         if self.qa_subagent_enabled:
             if self.qa_subagent_provider == "multi_cli" and not (self.qa_subagent_agents or "").strip():
                 raise ValueError("qa_subagent_agents is required when qa_subagent_provider=multi_cli")
+        if self.qa_subagent_provider == "multi_cli":
+            self.qa_subagent_agents = _normalize_agents_csv("qa_subagent_agents", self.qa_subagent_agents)
 
         # Planner conditionals
         if self.planner_enabled and not (self.planner_agents or "").strip():
             raise ValueError("planner_agents is required when planner_enabled=true")
+        if self.planner_agents:
+            self.planner_agents = _normalize_agents_csv("planner_agents", self.planner_agents)
 
         if self.regression_pool_enabled and self.regression_pool_max_agents <= 0:
             raise ValueError("regression_pool_max_agents must be > 0 when regression_pool_enabled=true")
@@ -149,6 +172,8 @@ class AdvancedSettingsModel(BaseModel):
         # Initializer conditionals
         if self.initializer_provider == "multi_cli" and not (self.initializer_agents or "").strip():
             raise ValueError("initializer_agents is required when initializer_provider=multi_cli")
+        if self.initializer_provider == "multi_cli":
+            self.initializer_agents = _normalize_agents_csv("initializer_agents", self.initializer_agents)
 
         if self.initializer_enqueue_count < 0:
             raise ValueError("initializer_enqueue_count must be >= 0")

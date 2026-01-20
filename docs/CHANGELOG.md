@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Softer hover feel: cards don’t “jump” on hover unless explicitly opted-in; shadows are a bit less intense.
 - Assistant button sits higher to avoid bottom-edge overlap.
 - Settings UX: clearer labels/tooltips + safety warnings; Codex/Gemini-only options disable automatically if their CLIs aren’t detected.
+- Settings UX: replaced CSV “agent lists” with safe pickers + ordering, added in-UI Help modals, and file locks default to ON (with confirmation when disabling).
 - UI auto-build logs which file triggered a rebuild; optional mtime tolerance for FAT32/exFAT (`AUTOCODER_UI_MTIME_TOLERANCE_S`).
 
 ### Multi-Model

@@ -7,10 +7,12 @@
  */
 
 import { useEffect, useMemo, useState } from 'react'
-import { Info, Save, RotateCcw, SlidersHorizontal } from 'lucide-react'
+import { ArrowDown, ArrowUp, Info, RotateCcw, Save, SlidersHorizontal } from 'lucide-react'
 import { useAdvancedSettings, useUpdateAdvancedSettings } from '../hooks/useAdvancedSettings'
 import { useSetupStatus } from '../hooks/useProjects'
 import type { AdvancedSettings } from '../lib/types'
+import { ConfirmationDialog } from './ConfirmationDialog'
+import { HelpModal } from './HelpModal'
 
 function clampInt(v: number, min: number, max: number): number {
   if (!Number.isFinite(v)) return min
@@ -29,7 +31,7 @@ const DEFAULTS: AdvancedSettings = {
   codex_model: '',
   codex_reasoning_effort: '',
   gemini_model: '',
-  locks_enabled: false,
+  locks_enabled: true,
   worker_verify: true,
   worker_provider: 'claude',
   worker_patch_max_iterations: 2,
@@ -88,6 +90,269 @@ const DEFAULTS: AdvancedSettings = {
   skip_port_check: false,
 }
 
+type HelpTopic =
+  | 'overview'
+  | 'review'
+  | 'locks'
+  | 'gatekeeper'
+  | 'cli_defaults'
+  | 'workers'
+  | 'qa_controller'
+  | 'regression_pool'
+  | 'planner'
+  | 'initializer'
+
+const HELP_CONTENT: Record<HelpTopic, { title: string; body: JSX.Element }> = {
+  overview: {
+    title: 'Advanced Settings — How this actually works',
+    body: (
+      <div className="space-y-4 text-sm">
+        <p>
+          These settings are <span className="font-bold">global</span> (this machine) and only affect runs started from
+          the Web UI. When you hit <span className="font-mono">Save</span>, the server persists them and applies them as
+          env vars when spawning agents/orchestrator.
+        </p>
+        <div className="neo-card p-4 bg-[var(--color-neo-bg)] space-y-2">
+          <div className="font-display font-bold uppercase text-xs">Good mental model</div>
+          <ul className="list-disc pl-5 space-y-1">
+            <li>
+              <span className="font-bold">Project config</span> lives in the target repo (<span className="font-mono">autocoder.yaml</span>).
+            </li>
+            <li>
+              <span className="font-bold">Advanced settings</span> live on your machine (<span className="font-mono">~/.autocoder/settings.db</span>).
+            </li>
+            <li>
+              <span className="font-bold">Nothing changes</span> until you click Save.
+            </li>
+          </ul>
+        </div>
+        <p className="text-[var(--color-neo-text-secondary)]">
+          If you’re new: keep <span className="font-bold">Gatekeeper</span>, <span className="font-bold">Worker verify</span>, and{' '}
+          <span className="font-bold">File locks</span> enabled. Those three prevent 90% of “why is this cursed?” moments.
+        </p>
+      </div>
+    ),
+  },
+  review: {
+    title: 'Review (optional) — what it does',
+    body: (
+      <div className="space-y-4 text-sm">
+        <p>
+          Review runs inside <span className="font-bold">Gatekeeper</span> after tests pass, right before merging. It
+          reviews the <span className="font-bold">staged diff</span> in the temporary worktree.
+        </p>
+        <div className="neo-card p-4 bg-[var(--color-neo-bg)] space-y-2">
+          <div className="font-display font-bold uppercase text-xs">Modes</div>
+          <ul className="list-disc pl-5 space-y-1">
+            <li>
+              <span className="font-bold">Advisory</span>: records findings in the Gatekeeper artifact, but does not block the merge.
+            </li>
+            <li>
+              <span className="font-bold">Gate</span>: blocks the merge if review is not approved (unless the reviewer explicitly skips).
+            </li>
+          </ul>
+        </div>
+        <div className="neo-card p-4 bg-[var(--color-neo-bg)] space-y-2">
+          <div className="font-display font-bold uppercase text-xs">Types</div>
+          <ul className="list-disc pl-5 space-y-1">
+            <li>
+              <span className="font-bold">Command</span>: run a shell command in the staged repo (exit 0 = pass). Great for
+              <span className="font-mono"> lint </span>/<span className="font-mono"> typecheck </span> gates.
+            </li>
+            <li>
+              <span className="font-bold">Claude</span>: Claude Agent SDK reviews <span className="font-mono">git diff --cached</span>. If no credentials
+              exist, it skips (so merges stay deterministic by default).
+            </li>
+            <li>
+              <span className="font-bold">Multi‑CLI</span>: Codex/Gemini CLIs review the diff and vote via consensus (any/majority/all). Missing CLIs are skipped.
+            </li>
+          </ul>
+        </div>
+        <p className="text-[var(--color-neo-text-secondary)]">
+          Review is not a substitute for tests. Think of it as “linting + sanity check + second set of eyes.”
+        </p>
+      </div>
+    ),
+  },
+  locks: {
+    title: 'File locks + Worker verify (recommended)',
+    body: (
+      <div className="space-y-4 text-sm">
+        <p>
+          These are your “don’t melt the repo” safety rails when you run multiple agents/sub‑agents.
+        </p>
+        <div className="neo-card p-4 bg-[var(--color-neo-bg)] space-y-2">
+          <div className="font-display font-bold uppercase text-xs">File locks</div>
+          <p className="text-[var(--color-neo-text-secondary)]">
+            Enforces a per‑file write lock for the agent’s file‑write tools. First writer auto‑acquires the lock; other agents must pick different files.
+          </p>
+        </div>
+        <div className="neo-card p-4 bg-[var(--color-neo-bg)] space-y-2">
+          <div className="font-display font-bold uppercase text-xs">Worker verify</div>
+          <p className="text-[var(--color-neo-text-secondary)]">
+            Forces workers to submit for Gatekeeper verification instead of self‑attesting “passing”. Gatekeeper runs deterministic commands and merges safely.
+          </p>
+        </div>
+        <p className="text-[var(--color-neo-text-secondary)]">
+          Separate thing: AutoCoder also uses a per‑project run lock (<span className="font-mono">.agent.lock</span>) so two orchestrators don’t run in the same project.
+        </p>
+      </div>
+    ),
+  },
+  gatekeeper: {
+    title: 'Gatekeeper — deterministic merge gate (and when to ignore it)',
+    body: (
+      <div className="space-y-4 text-sm">
+        <p>
+          Gatekeeper is the only thing allowed to merge to main. It verifies in a clean temporary worktree, then fast‑forwards main to the verified merge commit.
+        </p>
+        <div className="neo-card p-4 bg-[var(--color-neo-bg)] space-y-2">
+          <div className="font-display font-bold uppercase text-xs">Require Gatekeeper</div>
+          <p className="text-[var(--color-neo-text-secondary)]">
+            Recommended. Disabling it removes the deterministic merge gate and can merge broken code (especially in parallel).
+          </p>
+        </div>
+        <div className="neo-card p-4 bg-[var(--color-neo-bg)] space-y-2">
+          <div className="font-display font-bold uppercase text-xs">Allow No Tests</div>
+          <p className="text-[var(--color-neo-text-secondary)]">
+            Lets Gatekeeper proceed when no deterministic test command exists. This is basically “YOLO mode for merges” — use only when you accept that risk.
+          </p>
+        </div>
+        <p className="text-[var(--color-neo-text-secondary)]">
+          Tip: if a project doesn’t have a <span className="font-mono">test</span> script, configure commands in <span className="font-mono">autocoder.yaml</span> instead of disabling Gatekeeper.
+        </p>
+      </div>
+    ),
+  },
+  cli_defaults: {
+    title: 'Codex/Gemini defaults — models + reasoning',
+    body: (
+      <div className="space-y-4 text-sm">
+        <p>
+          These are the default knobs used by <span className="font-bold">Codex CLI</span> and <span className="font-bold">Gemini CLI</span> steps across AutoCoder (review, planner drafts, patch workers, etc.).
+        </p>
+        <div className="neo-card p-4 bg-[var(--color-neo-bg)] space-y-2">
+          <div className="font-display font-bold uppercase text-xs">Best practice</div>
+          <ul className="list-disc pl-5 space-y-1 text-[var(--color-neo-text-secondary)]">
+            <li>
+              Leave model fields blank to use the CLI’s own defaults (AutoCoder also reads Codex defaults from <span className="font-mono">~/.codex/config.toml</span> when available).
+            </li>
+            <li>
+              Only override when you need a specific model for cost/latency/quality.
+            </li>
+            <li>
+              Reasoning effort is Codex-specific and accepts: <span className="font-mono">low|medium|high|xlow|xmedium|xhigh</span>.
+            </li>
+          </ul>
+        </div>
+      </div>
+    ),
+  },
+  workers: {
+    title: 'Feature workers — providers and patch order',
+    body: (
+      <div className="space-y-4 text-sm">
+        <p>
+          Feature workers implement features. By default you get the full Claude Agent SDK loop. Optional providers can generate a unified diff instead (fast, but narrower).
+        </p>
+        <div className="neo-card p-4 bg-[var(--color-neo-bg)] space-y-2">
+          <div className="font-display font-bold uppercase text-xs">Providers</div>
+          <ul className="list-disc pl-5 space-y-1">
+            <li>
+              <span className="font-bold">Claude (Agent SDK)</span>: full tool loop + context. Best default.
+            </li>
+            <li>
+              <span className="font-bold">Codex CLI / Gemini CLI</span>: patch worker outputs diffs; Gatekeeper verifies and merges.
+            </li>
+            <li>
+              <span className="font-bold">Multi‑CLI</span>: tries Codex/Gemini in your selected order.
+            </li>
+          </ul>
+        </div>
+        <p className="text-[var(--color-neo-text-secondary)]">
+          Patch order only matters for <span className="font-mono">multi_cli</span>. If a CLI isn’t installed, it’s skipped automatically.
+        </p>
+      </div>
+    ),
+  },
+  qa_controller: {
+    title: 'QA + Controller — fixing failures without human babysitting',
+    body: (
+      <div className="space-y-4 text-sm">
+        <p>
+          These are optional helpers that kick in after a Gatekeeper rejection (or right before Gatekeeper runs).
+        </p>
+        <div className="neo-card p-4 bg-[var(--color-neo-bg)] space-y-2">
+          <div className="font-display font-bold uppercase text-xs">QA auto‑fix</div>
+          <p className="text-[var(--color-neo-text-secondary)]">
+            Reuses the same worker session to focus on fixing the last failure (tests/lint/typecheck), capped by max sessions.
+          </p>
+        </div>
+        <div className="neo-card p-4 bg-[var(--color-neo-bg)] space-y-2">
+          <div className="font-display font-bold uppercase text-xs">QA sub‑agent</div>
+          <p className="text-[var(--color-neo-text-secondary)]">
+            Spawns a short‑lived fixer in the same feature branch. It only fixes the failure excerpt and resubmits — no new scope creep.
+          </p>
+        </div>
+        <div className="neo-card p-4 bg-[var(--color-neo-bg)] space-y-2">
+          <div className="font-display font-bold uppercase text-xs">Controller preflight</div>
+          <p className="text-[var(--color-neo-text-secondary)]">
+            Runs deterministic verification commands in the agent worktree before Gatekeeper merge verification. Fail‑fast, less churn.
+          </p>
+        </div>
+      </div>
+    ),
+  },
+  regression_pool: {
+    title: 'Regression pool — keep “passing” features passing',
+    body: (
+      <div className="space-y-4 text-sm">
+        <p>
+          When there are no claimable features, AutoCoder can spawn short‑lived regression testers (Claude + Playwright) to re‑verify previously passing features.
+        </p>
+        <div className="neo-card p-4 bg-[var(--color-neo-bg)] space-y-2">
+          <div className="font-display font-bold uppercase text-xs">What happens if it finds a bug?</div>
+          <p className="text-[var(--color-neo-text-secondary)]">
+            It creates a new issue‑like <span className="font-mono">REGRESSION</span> feature linked to the original feature, so the normal queue can fix it.
+          </p>
+        </div>
+        <p className="text-[var(--color-neo-text-secondary)]">
+          This is opt‑in because it can cost tokens and can be noisy on unstable projects. Start with 1 tester and a longer min interval.
+        </p>
+      </div>
+    ),
+  },
+  planner: {
+    title: 'Planner — multi‑model plan artifacts (optional)',
+    body: (
+      <div className="space-y-4 text-sm">
+        <p>
+          Planner generates a short plan per feature and prepends it to the worker prompt. Codex/Gemini can draft, and an optional synthesizer can merge ideas.
+        </p>
+        <p className="text-[var(--color-neo-text-secondary)]">
+          Use it when features are complex, specs are messy, or you want more predictable step‑by‑step execution.
+        </p>
+      </div>
+    ),
+  },
+  initializer: {
+    title: 'Initializer — generating the feature backlog',
+    body: (
+      <div className="space-y-4 text-sm">
+        <p>
+          Initializer turns your spec into a backlog. You can use Claude, Codex CLI, Gemini CLI, or multi‑CLI drafts with an optional synthesizer.
+        </p>
+        <div className="neo-card p-4 bg-[var(--color-neo-bg)] space-y-2">
+          <div className="font-display font-bold uppercase text-xs">Staging</div>
+          <p className="text-[var(--color-neo-text-secondary)]">
+            Large backlogs can be staged to keep active queues manageable. The stage threshold controls when AutoCoder starts staging instead of enabling everything at once.
+          </p>
+        </div>
+      </div>
+    ),
+  },
+}
+
 export function AdvancedSettingsContent() {
   const { data, isLoading } = useAdvancedSettings()
   const update = useUpdateAdvancedSettings()
@@ -95,10 +360,36 @@ export function AdvancedSettingsContent() {
 
   const [draft, setDraft] = useState<AdvancedSettings>(DEFAULTS)
   const [tab, setTab] = useState<'automation' | 'gatekeeper' | 'logs' | 'retry' | 'ports' | 'ui'>('automation')
+  const [helpTopic, setHelpTopic] = useState<HelpTopic | null>(null)
+  const [confirmToggle, setConfirmToggle] = useState<{
+    field: keyof AdvancedSettings
+    next: boolean
+    title: string
+    message: string
+    confirmText: string
+    variant?: 'danger' | 'warning'
+  } | null>(null)
 
   useEffect(() => {
     if (data) setDraft(data)
   }, [data])
+
+  const requestDangerToggle = (
+    field: keyof AdvancedSettings,
+    next: boolean,
+    cfg: { title: string; message: string; confirmText: string; variant?: 'danger' | 'warning' },
+  ) => {
+    const shouldConfirm =
+      (field === 'allow_no_tests' && next === true) ||
+      (field !== 'allow_no_tests' && next === false)
+
+    if (!shouldConfirm) {
+      setDraft({ ...draft, [field]: next } as AdvancedSettings)
+      return
+    }
+
+    setConfirmToggle({ field, next, ...cfg })
+  }
 
   const validation = useMemo(() => {
     type FieldName = keyof AdvancedSettings
@@ -118,6 +409,27 @@ export function AdvancedSettingsContent() {
 
     const isHexColor = (value: string) => /^#[0-9a-fA-F]{6}$/.test(value.trim())
 
+    const normalizeCsv = (raw: string) =>
+      raw
+        .replace(/;/g, ',')
+        .split(',')
+        .map((p) => p.trim().toLowerCase())
+        .filter(Boolean)
+
+    const validateAgentCsv = (field: FieldName, raw: string, opts?: { required?: boolean }) => {
+      const required = Boolean(opts?.required)
+      const tokens = normalizeCsv(raw)
+      if (required && tokens.length === 0) {
+        addError(field, 'Select at least one agent')
+        return
+      }
+      const allowed = new Set(['codex', 'gemini'])
+      const unknown = tokens.filter((t) => !allowed.has(t))
+      if (unknown.length > 0) {
+        addError(field, `Unknown agent(s): ${unknown.join(', ')} (allowed: codex, gemini)`)
+      }
+    }
+
     if (draft.api_port_range_end <= draft.api_port_range_start) addError('api_port_range_end', 'API port range end must be > start')
     if (draft.web_port_range_end <= draft.web_port_range_start) addError('web_port_range_end', 'WEB port range end must be > start')
 
@@ -125,7 +437,10 @@ export function AdvancedSettingsContent() {
       if (draft.review_mode === 'off') addError('review_mode', 'Set review mode to advisory or gate')
       if (draft.review_type === 'none') addError('review_type', 'Select a review type')
       if (draft.review_type === 'command' && !draft.review_command.trim()) addError('review_command', 'Review command is required for command review')
-      if (draft.review_type === 'multi_cli' && !draft.review_agents.trim()) addError('review_agents', 'Review agents are required for multi_cli review')
+      if (draft.review_type === 'multi_cli') {
+        if (!draft.review_agents.trim()) addError('review_agents', 'Review agents are required for multi_cli review')
+        validateAgentCsv('review_agents', draft.review_agents, { required: true })
+      }
       if (draft.review_consensus.trim() && !['any', 'majority', 'all'].includes(draft.review_consensus.trim()))
         addError('review_consensus', 'Consensus must be any, majority, or all')
     } else {
@@ -141,17 +456,25 @@ export function AdvancedSettingsContent() {
 
     if (draft.worker_provider === 'multi_cli' && !draft.worker_patch_agents.trim())
       addError('worker_patch_agents', 'Patch provider order is required for multi_cli')
+    validateAgentCsv('worker_patch_agents', draft.worker_patch_agents, { required: draft.worker_provider === 'multi_cli' })
 
     if (draft.qa_subagent_enabled && draft.qa_subagent_provider === 'multi_cli' && !draft.qa_subagent_agents.trim())
       addError('qa_subagent_agents', 'QA provider order is required for multi_cli')
+    if (draft.qa_subagent_provider === 'multi_cli') {
+      validateAgentCsv('qa_subagent_agents', draft.qa_subagent_agents, { required: draft.qa_subagent_enabled })
+    }
 
     if (draft.planner_enabled && !draft.planner_agents.trim()) addError('planner_agents', 'Planner agents are required when planner is enabled')
+    validateAgentCsv('planner_agents', draft.planner_agents, { required: draft.planner_enabled })
 
     if (draft.regression_pool_enabled && draft.regression_pool_max_agents <= 0)
       addError('regression_pool_max_agents', 'Regression pool max agents must be > 0 when enabled')
 
     if (draft.initializer_provider === 'multi_cli' && !draft.initializer_agents.trim())
       addError('initializer_agents', 'Initializer agents are required when provider is multi_cli')
+    if (draft.initializer_provider === 'multi_cli') {
+      validateAgentCsv('initializer_agents', draft.initializer_agents, { required: true })
+    }
 
     if (draft.initializer_stage_threshold > 0 && draft.initializer_enqueue_count === 0)
       addWarning('initializer_enqueue_count', 'Stage threshold is set but enqueue count is 0 (backlog will never start)')
@@ -241,6 +564,14 @@ export function AdvancedSettingsContent() {
           </div>
 
           <div className="flex items-center gap-2">
+            <button
+              className="neo-btn neo-btn-secondary text-sm"
+              onClick={() => setHelpTopic('overview')}
+              title="What do these settings do?"
+            >
+              <Info size={18} />
+              Help
+            </button>
             <button
               className="neo-btn neo-btn-secondary text-sm"
               onClick={() => setDraft(DEFAULTS)}
@@ -335,13 +666,15 @@ export function AdvancedSettingsContent() {
               <div className="neo-card p-4">
                 <div className="flex items-center gap-2 mb-3">
                   <div className="font-display font-bold uppercase">Review</div>
-                  <span
-                    className="inline-flex"
-                    title="Optional post-test review step in Gatekeeper. Advisory records findings; Gate blocks merge on rejection."
-                    aria-label="Help"
+                  <button
+                    type="button"
+                    className="inline-flex items-center justify-center p-1 rounded hover:bg-black/5"
+                    onClick={() => setHelpTopic('review')}
+                    title="What is Review?"
+                    aria-label="Help: Review"
                   >
                     <Info size={16} className="text-[var(--color-neo-text-secondary)]" aria-hidden="true" />
-                  </span>
+                  </button>
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   <label className="neo-card p-3 flex items-center justify-between cursor-pointer">
@@ -409,44 +742,97 @@ export function AdvancedSettingsContent() {
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-3">
-                  <TextField
-                    label="Review command"
-                    value={draft.review_command}
-                    onChange={(v) => setDraft({ ...draft, review_command: v })}
-                    placeholder="e.g. npm test && npm run lint"
-                    error={validation.fieldErrors.review_command}
-                  />
-                  <TextField label="Review model" value={draft.review_model} onChange={(v) => setDraft({ ...draft, review_model: v })} placeholder="e.g. sonnet" />
-                  <TextField
-                    label="Review agents (csv)"
-                    value={draft.review_agents}
-                    onChange={(v) => setDraft({ ...draft, review_agents: v })}
-                    placeholder="e.g. codex,gemini"
-                    error={validation.fieldErrors.review_agents}
-                  />
-                  <TextField
-                    label="Consensus"
-                    value={draft.review_consensus}
-                    onChange={(v) => setDraft({ ...draft, review_consensus: v })}
-                    placeholder="any|majority|all"
-                    error={validation.fieldErrors.review_consensus}
-                  />
+                  {draft.review_type === 'command' && (
+                    <TextField
+                      label="Review command"
+                      value={draft.review_command}
+                      onChange={(v) => setDraft({ ...draft, review_command: v })}
+                      placeholder="e.g. npm run lint"
+                      error={validation.fieldErrors.review_command}
+                    />
+                  )}
+
+                  {draft.review_type === 'claude' && (
+                    <SelectField
+                      label="Claude review model (optional)"
+                      value={(draft.review_model || '').trim().toLowerCase()}
+                      onChange={(v) => setDraft({ ...draft, review_model: v })}
+                      options={[
+                        { value: '', label: 'Auto (sonnet)' },
+                        { value: 'haiku', label: 'haiku' },
+                        { value: 'sonnet', label: 'sonnet' },
+                        { value: 'opus', label: 'opus' },
+                      ]}
+                    />
+                  )}
+
+                  {draft.review_type === 'multi_cli' && (
+                    <>
+                      <CsvAgentOrderField
+                        label="Review agents"
+                        value={draft.review_agents}
+                        onChange={(v) => setDraft({ ...draft, review_agents: v })}
+                        error={validation.fieldErrors.review_agents}
+                        availability={{ codex: Boolean(setupStatus?.codex_cli), gemini: Boolean(setupStatus?.gemini_cli) }}
+                        rawPlaceholder="e.g. codex,gemini"
+                      />
+                      <SelectField
+                        label="Consensus"
+                        value={(draft.review_consensus || '').trim().toLowerCase()}
+                        onChange={(v) => setDraft({ ...draft, review_consensus: v })}
+                        options={[
+                          { value: '', label: 'Auto (majority)' },
+                          { value: 'majority', label: 'majority' },
+                          { value: 'any', label: 'any' },
+                          { value: 'all', label: 'all' },
+                        ]}
+                        error={validation.fieldErrors.review_consensus}
+                      />
+                    </>
+                  )}
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mt-3">
+                <div className="text-xs text-[var(--color-neo-text-secondary)] mt-2">
+                  Tip: set mode to <span className="font-mono">gate</span> to block merges when review fails.
+                </div>
+              </div>
+
+              <div className="neo-card p-4">
+                <div className="flex items-center gap-2 mb-3">
+                  <div className="font-display font-bold uppercase">Codex / Gemini Defaults</div>
+                  <button
+                    type="button"
+                    className="inline-flex items-center justify-center p-1 rounded hover:bg-black/5"
+                    onClick={() => setHelpTopic('cli_defaults')}
+                    title="What are these defaults?"
+                    aria-label="Help: Codex/Gemini defaults"
+                  >
+                    <Info size={16} className="text-[var(--color-neo-text-secondary)]" aria-hidden="true" />
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                   <TextField
                     label="Codex CLI model (optional)"
                     value={draft.codex_model}
                     onChange={(v) => setDraft({ ...draft, codex_model: v })}
-                    placeholder="Leave blank to use Codex CLI defaults"
+                    placeholder="Leave blank to use Codex defaults"
                     warning={validation.fieldWarnings.codex_model}
                     disabled={setupStatus ? !setupStatus.codex_cli : false}
                   />
-                  <TextField
+                  <SelectField
                     label="Codex reasoning (optional)"
-                    value={draft.codex_reasoning_effort}
+                    value={(draft.codex_reasoning_effort || '').trim().toLowerCase()}
                     onChange={(v) => setDraft({ ...draft, codex_reasoning_effort: v })}
-                    placeholder="low|medium|high|xhigh"
+                    options={[
+                      { value: '', label: 'Auto (use Codex defaults)' },
+                      { value: 'low', label: 'low' },
+                      { value: 'medium', label: 'medium' },
+                      { value: 'high', label: 'high' },
+                      { value: 'xlow', label: 'xlow' },
+                      { value: 'xmedium', label: 'xmedium' },
+                      { value: 'xhigh', label: 'xhigh' },
+                    ]}
                     error={validation.fieldErrors.codex_reasoning_effort}
                     disabled={setupStatus ? !setupStatus.codex_cli : false}
                   />
@@ -454,7 +840,7 @@ export function AdvancedSettingsContent() {
                     label="Gemini CLI model (optional)"
                     value={draft.gemini_model}
                     onChange={(v) => setDraft({ ...draft, gemini_model: v })}
-                    placeholder="Leave blank to use Gemini CLI defaults"
+                    placeholder="Leave blank to use Gemini defaults"
                     warning={validation.fieldWarnings.gemini_model}
                     disabled={setupStatus ? !setupStatus.gemini_cli : false}
                   />
@@ -473,31 +859,55 @@ export function AdvancedSettingsContent() {
                       ) : null}
                     </div>
                   )}
-
-                <div className="text-xs text-[var(--color-neo-text-secondary)] mt-2">
-                  Tip: set mode to <span className="font-mono">gate</span> to block merges when review fails.
-                </div>
               </div>
 
               <div className="neo-card p-4">
                 <div className="flex items-center gap-2 mb-3">
                   <div className="font-display font-bold uppercase">Locks + Verification</div>
-                  <span
-                    className="inline-flex"
-                    title="File locks prevent multiple orchestrators from colliding in the same project. Worker verify forces features through Gatekeeper (tests + merge)."
-                    aria-label="Help"
+                  <button
+                    type="button"
+                    className="inline-flex items-center justify-center p-1 rounded hover:bg-black/5"
+                    onClick={() => setHelpTopic('locks')}
+                    title="What are locks and worker verify?"
+                    aria-label="Help: Locks + verification"
                   >
                     <Info size={16} className="text-[var(--color-neo-text-secondary)]" aria-hidden="true" />
-                  </span>
+                  </button>
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   <label className="neo-card p-3 flex items-center justify-between cursor-pointer">
                     <span className="font-display font-bold text-sm">Enable file locks</span>
-                    <input type="checkbox" checked={draft.locks_enabled} onChange={(e) => setDraft({ ...draft, locks_enabled: e.target.checked })} className="w-5 h-5" />
+                    <input
+                      type="checkbox"
+                      checked={draft.locks_enabled}
+                      onChange={(e) =>
+                        requestDangerToggle('locks_enabled', e.target.checked, {
+                          title: 'Disable file locks?',
+                          message:
+                            'File locks prevent two agents/sub-agents from writing the same files at the same time. Disabling can cause merge conflicts and “last writer wins” bugs.',
+                          confirmText: 'Disable locks',
+                          variant: 'warning',
+                        })
+                      }
+                      className="w-5 h-5"
+                    />
                   </label>
                   <label className="neo-card p-3 flex items-center justify-between cursor-pointer">
                     <span className="font-display font-bold text-sm">Worker verify (Gatekeeper)</span>
-                    <input type="checkbox" checked={draft.worker_verify} onChange={(e) => setDraft({ ...draft, worker_verify: e.target.checked })} className="w-5 h-5" />
+                    <input
+                      type="checkbox"
+                      checked={draft.worker_verify}
+                      onChange={(e) =>
+                        requestDangerToggle('worker_verify', e.target.checked, {
+                          title: 'Disable worker verify?',
+                          message:
+                            'With worker verify off, workers can self‑attest passing without Gatekeeper’s deterministic verification/merge. Great for debugging, risky for real runs.',
+                          confirmText: 'Disable verify',
+                          variant: 'warning',
+                        })
+                      }
+                      className="w-5 h-5"
+                    />
                   </label>
                 </div>
                 <div className="text-xs text-[var(--color-neo-text-secondary)] mt-2">
@@ -524,7 +934,18 @@ export function AdvancedSettingsContent() {
               </div>
 
               <div className="neo-card p-4">
-                <div className="font-display font-bold uppercase mb-3">Feature Workers</div>
+                <div className="flex items-center gap-2 mb-3">
+                  <div className="font-display font-bold uppercase">Feature Workers</div>
+                  <button
+                    type="button"
+                    className="inline-flex items-center justify-center p-1 rounded hover:bg-black/5"
+                    onClick={() => setHelpTopic('workers')}
+                    title="What are feature workers?"
+                    aria-label="Help: Feature workers"
+                  >
+                    <Info size={16} className="text-[var(--color-neo-text-secondary)]" aria-hidden="true" />
+                  </button>
+                </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   <div className="neo-card p-3">
                     <div className="font-display font-bold text-sm mb-2">Worker provider</div>
@@ -561,12 +982,13 @@ export function AdvancedSettingsContent() {
                     onChange={(v) => setDraft({ ...draft, worker_patch_max_iterations: clampInt(v, 1, 20) })}
                   />
 
-                  <TextField
-                    label="Patch provider order (csv)"
+                  <CsvAgentOrderField
+                    label="Patch provider order"
                     value={draft.worker_patch_agents}
                     onChange={(v) => setDraft({ ...draft, worker_patch_agents: v })}
-                    placeholder="e.g. codex,gemini"
                     error={validation.fieldErrors.worker_patch_agents}
+                    availability={{ codex: Boolean(setupStatus?.codex_cli), gemini: Boolean(setupStatus?.gemini_cli) }}
+                    rawPlaceholder="e.g. codex,gemini"
                   />
                 </div>
                 <div className="text-xs text-[var(--color-neo-text-secondary)] mt-2">
@@ -581,13 +1003,34 @@ export function AdvancedSettingsContent() {
                 open={draft.qa_fix_enabled || draft.qa_subagent_enabled || draft.controller_enabled}
               >
                 <summary className="font-display font-bold uppercase cursor-pointer select-none">QA + Controller</summary>
+                <div className="flex justify-end mt-2">
+                  <button
+                    type="button"
+                    className="neo-btn neo-btn-secondary neo-btn-sm"
+                    onClick={() => setHelpTopic('qa_controller')}
+                    title="Explain QA + Controller"
+                  >
+                    <Info size={14} />
+                    What’s this?
+                  </button>
+                </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-3">
                   <label className="neo-card p-3 flex items-center justify-between cursor-pointer">
                     <span className="font-display font-bold text-sm">QA auto-fix</span>
                     <input type="checkbox" checked={draft.qa_fix_enabled} onChange={(e) => setDraft({ ...draft, qa_fix_enabled: e.target.checked })} className="w-5 h-5" />
                   </label>
                   <Field label="QA max sessions" value={draft.qa_max_sessions} onChange={(v) => setDraft({ ...draft, qa_max_sessions: clampInt(v, 0, 50) })} />
-                  <TextField label="QA model" value={draft.qa_model} onChange={(v) => setDraft({ ...draft, qa_model: v })} placeholder="e.g. sonnet" />
+                  <SelectField
+                    label="QA model (optional)"
+                    value={(draft.qa_model || '').trim().toLowerCase()}
+                    onChange={(v) => setDraft({ ...draft, qa_model: v })}
+                    options={[
+                      { value: '', label: 'Auto' },
+                      { value: 'haiku', label: 'haiku' },
+                      { value: 'sonnet', label: 'sonnet' },
+                      { value: 'opus', label: 'opus' },
+                    ]}
+                  />
 
                   <label className="neo-card p-3 flex items-center justify-between cursor-pointer">
                     <span className="font-display font-bold text-sm">QA sub-agent</span>
@@ -627,12 +1070,14 @@ export function AdvancedSettingsContent() {
                           </option>
                         </select>
                       </div>
-                      <TextField
-                        label="Order (csv)"
+                      <CsvAgentOrderField
+                        label="Order"
                         value={draft.qa_subagent_agents}
                         onChange={(v) => setDraft({ ...draft, qa_subagent_agents: v })}
-                        placeholder="e.g. codex,gemini"
                         error={validation.fieldErrors.qa_subagent_agents}
+                        availability={{ codex: Boolean(setupStatus?.codex_cli), gemini: Boolean(setupStatus?.gemini_cli) }}
+                        rawPlaceholder="e.g. codex,gemini"
+                        disabled={draft.qa_subagent_provider !== 'multi_cli'}
                       />
                     </div>
                     <div className="text-xs text-[var(--color-neo-text-secondary)] mt-2">
@@ -648,12 +1093,33 @@ export function AdvancedSettingsContent() {
                     <input type="checkbox" checked={draft.controller_enabled} onChange={(e) => setDraft({ ...draft, controller_enabled: e.target.checked })} className="w-5 h-5" />
                   </label>
                   <Field label="Controller max sessions" value={draft.controller_max_sessions} onChange={(v) => setDraft({ ...draft, controller_max_sessions: clampInt(v, 0, 50) })} />
-                  <TextField label="Controller model" value={draft.controller_model} onChange={(v) => setDraft({ ...draft, controller_model: v })} placeholder="e.g. haiku" />
+                  <SelectField
+                    label="Controller model (optional)"
+                    value={(draft.controller_model || '').trim().toLowerCase()}
+                    onChange={(v) => setDraft({ ...draft, controller_model: v })}
+                    options={[
+                      { value: '', label: 'Auto' },
+                      { value: 'haiku', label: 'haiku' },
+                      { value: 'sonnet', label: 'sonnet' },
+                      { value: 'opus', label: 'opus' },
+                    ]}
+                  />
                 </div>
               </details>
 
               <details className="neo-card p-4" open={draft.regression_pool_enabled}>
                 <summary className="font-display font-bold uppercase cursor-pointer select-none">Regression Pool</summary>
+                <div className="flex justify-end mt-2">
+                  <button
+                    type="button"
+                    className="neo-btn neo-btn-secondary neo-btn-sm"
+                    onClick={() => setHelpTopic('regression_pool')}
+                    title="Explain regression pool"
+                  >
+                    <Info size={14} />
+                    What’s this?
+                  </button>
+                </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-3">
                   <label className="neo-card p-3 flex items-center justify-between cursor-pointer">
                     <span className="font-display font-bold text-sm">Enable regression testers</span>
@@ -680,11 +1146,16 @@ export function AdvancedSettingsContent() {
                     value={draft.regression_pool_max_iterations}
                     onChange={(v) => setDraft({ ...draft, regression_pool_max_iterations: clampInt(v, 1, 5) })}
                   />
-                  <TextField
+                  <SelectField
                     label="Model (optional)"
-                    value={draft.regression_pool_model}
+                    value={(draft.regression_pool_model || '').trim().toLowerCase()}
                     onChange={(v) => setDraft({ ...draft, regression_pool_model: v })}
-                    placeholder="e.g. sonnet"
+                    options={[
+                      { value: '', label: 'Auto (sonnet)' },
+                      { value: 'haiku', label: 'haiku' },
+                      { value: 'sonnet', label: 'sonnet' },
+                      { value: 'opus', label: 'opus' },
+                    ]}
                   />
                 </div>
                 <div className="text-xs text-[var(--color-neo-text-secondary)] mt-2">
@@ -695,6 +1166,17 @@ export function AdvancedSettingsContent() {
 
               <details className="neo-card p-4" open={draft.planner_enabled}>
                 <summary className="font-display font-bold uppercase cursor-pointer select-none">Planner</summary>
+                <div className="flex justify-end mt-2">
+                  <button
+                    type="button"
+                    className="neo-btn neo-btn-secondary neo-btn-sm"
+                    onClick={() => setHelpTopic('planner')}
+                    title="Explain planner"
+                  >
+                    <Info size={14} />
+                    What’s this?
+                  </button>
+                </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-3">
                   <label className="neo-card p-3 flex items-center justify-between cursor-pointer">
                     <span className="font-display font-bold text-sm">Feature plan (multi-model)</span>
@@ -710,12 +1192,13 @@ export function AdvancedSettingsContent() {
                     value={draft.planner_timeout_s}
                     onChange={(v) => setDraft({ ...draft, planner_timeout_s: clampInt(v, 30, 3600) })}
                   />
-                  <TextField
-                    label="Agents (csv)"
+                  <CsvAgentOrderField
+                    label="Agents"
                     value={draft.planner_agents}
                     onChange={(v) => setDraft({ ...draft, planner_agents: v })}
-                    placeholder="e.g. codex,gemini"
                     error={validation.fieldErrors.planner_agents}
+                    availability={{ codex: Boolean(setupStatus?.codex_cli), gemini: Boolean(setupStatus?.gemini_cli) }}
+                    rawPlaceholder="e.g. codex,gemini"
                   />
                   <div className="neo-card p-3">
                     <div className="font-display font-bold text-sm mb-2">Synthesizer</div>
@@ -730,11 +1213,16 @@ export function AdvancedSettingsContent() {
                       <option value="gemini">gemini</option>
                     </select>
                   </div>
-                  <TextField
+                  <SelectField
                     label="Claude model (optional)"
-                    value={draft.planner_model}
+                    value={(draft.planner_model || '').trim().toLowerCase()}
                     onChange={(v) => setDraft({ ...draft, planner_model: v })}
-                    placeholder="e.g. sonnet"
+                    options={[
+                      { value: '', label: 'Auto (sonnet)' },
+                      { value: 'haiku', label: 'haiku' },
+                      { value: 'sonnet', label: 'sonnet' },
+                      { value: 'opus', label: 'opus' },
+                    ]}
                   />
                 </div>
                 <div className="text-xs text-[var(--color-neo-text-secondary)] mt-2">
@@ -745,6 +1233,17 @@ export function AdvancedSettingsContent() {
 
               <details className="neo-card p-4" open={draft.initializer_provider !== 'claude'}>
                 <summary className="font-display font-bold uppercase cursor-pointer select-none">Initializer</summary>
+                <div className="flex justify-end mt-2">
+                  <button
+                    type="button"
+                    className="neo-btn neo-btn-secondary neo-btn-sm"
+                    onClick={() => setHelpTopic('initializer')}
+                    title="Explain initializer"
+                  >
+                    <Info size={14} />
+                    What’s this?
+                  </button>
+                </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-3">
                   <div className="neo-card p-3">
                     <div className="text-xs font-mono text-[var(--color-neo-text-secondary)] mb-1">Provider</div>
@@ -768,12 +1267,14 @@ export function AdvancedSettingsContent() {
                       </option>
                     </select>
                   </div>
-                  <TextField
-                    label="Agents (csv)"
+                  <CsvAgentOrderField
+                    label="Agents"
                     value={draft.initializer_agents}
                     onChange={(v) => setDraft({ ...draft, initializer_agents: v })}
-                    placeholder="e.g. codex,gemini"
                     error={validation.fieldErrors.initializer_agents}
+                    availability={{ codex: Boolean(setupStatus?.codex_cli), gemini: Boolean(setupStatus?.gemini_cli) }}
+                    rawPlaceholder="e.g. codex,gemini"
+                    disabled={draft.initializer_provider !== 'multi_cli'}
                   />
                   <div className="neo-card p-3">
                     <div className="font-display font-bold text-sm mb-2">Synthesizer</div>
@@ -816,13 +1317,15 @@ export function AdvancedSettingsContent() {
             <div className="neo-card p-4">
               <div className="flex items-center gap-2 mb-3">
                 <div className="font-display font-bold uppercase">Gatekeeper</div>
-                <span
-                  className="inline-flex"
-                  title="Gatekeeper is the deterministic merge gate: it runs verification commands in a clean temp worktree and only then updates main."
-                  aria-label="Help"
+                <button
+                  type="button"
+                  className="inline-flex items-center justify-center p-1 rounded hover:bg-black/5"
+                  onClick={() => setHelpTopic('gatekeeper')}
+                  title="What is Gatekeeper?"
+                  aria-label="Help: Gatekeeper"
                 >
                   <Info size={16} className="text-[var(--color-neo-text-secondary)]" aria-hidden="true" />
-                </span>
+                </button>
               </div>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 <label className="neo-card p-3 flex items-center justify-between cursor-pointer">
@@ -830,7 +1333,15 @@ export function AdvancedSettingsContent() {
                   <input
                     type="checkbox"
                     checked={draft.require_gatekeeper}
-                    onChange={(e) => setDraft({ ...draft, require_gatekeeper: e.target.checked })}
+                    onChange={(e) =>
+                      requestDangerToggle('require_gatekeeper', e.target.checked, {
+                        title: 'Disable Gatekeeper?',
+                        message:
+                          'Gatekeeper is the deterministic merge gate. Disabling it means features may merge without running verification commands in a clean temp worktree.',
+                        confirmText: 'Disable Gatekeeper',
+                        variant: 'danger',
+                      })
+                    }
                     className="w-5 h-5"
                   />
                 </label>
@@ -839,7 +1350,15 @@ export function AdvancedSettingsContent() {
                   <input
                     type="checkbox"
                     checked={draft.allow_no_tests}
-                    onChange={(e) => setDraft({ ...draft, allow_no_tests: e.target.checked })}
+                    onChange={(e) =>
+                      requestDangerToggle('allow_no_tests', e.target.checked, {
+                        title: 'Allow merges without tests?',
+                        message:
+                          'This allows Gatekeeper to proceed even when no deterministic test command exists. It’s basically YOLO for merges.',
+                        confirmText: 'Allow no-tests',
+                        variant: 'warning',
+                      })
+                    }
                     className="w-5 h-5"
                   />
                 </label>
@@ -999,6 +1518,29 @@ export function AdvancedSettingsContent() {
           )}
         </>
       )}
+
+      <HelpModal
+        isOpen={helpTopic !== null}
+        title={helpTopic ? HELP_CONTENT[helpTopic].title : ''}
+        onClose={() => setHelpTopic(null)}
+      >
+        {helpTopic ? HELP_CONTENT[helpTopic].body : null}
+      </HelpModal>
+
+      <ConfirmationDialog
+        isOpen={confirmToggle !== null}
+        title={confirmToggle?.title ?? ''}
+        message={confirmToggle?.message ?? ''}
+        confirmText={confirmToggle?.confirmText ?? 'Confirm'}
+        cancelText="Cancel"
+        variant={confirmToggle?.variant ?? 'warning'}
+        onConfirm={() => {
+          if (!confirmToggle) return
+          setDraft({ ...draft, [confirmToggle.field]: confirmToggle.next } as AdvancedSettings)
+          setConfirmToggle(null)
+        }}
+        onCancel={() => setConfirmToggle(null)}
+      />
     </div>
   )
 }
@@ -1059,7 +1601,7 @@ function TextField({
     error ? 'border-[var(--color-neo-danger)]' : warning ? 'border-yellow-600' : 'border-[var(--color-neo-border)]'
   return (
     <div>
-      <div className="text-xs font-mono text-[var(--color-neo-text-secondary)] mb-1">{label}</div>
+      {label ? <div className="text-xs font-mono text-[var(--color-neo-text-secondary)] mb-1">{label}</div> : null}
       <input
         type="text"
         value={value}
@@ -1070,6 +1612,209 @@ function TextField({
           disabled ? 'opacity-60 cursor-not-allowed' : ''
         }`}
       />
+      {error && <div className="text-xs mt-1 text-[var(--color-neo-danger)]">{error}</div>}
+      {!error && warning && <div className="text-xs mt-1 text-yellow-800">{warning}</div>}
+    </div>
+  )
+}
+
+function SelectField({
+  label,
+  value,
+  onChange,
+  options,
+  error,
+  warning,
+  disabled,
+}: {
+  label: string
+  value: string
+  onChange: (v: string) => void
+  options: Array<{ value: string; label: string }>
+  error?: string
+  warning?: string
+  disabled?: boolean
+}) {
+  const border =
+    error ? 'border-[var(--color-neo-danger)]' : warning ? 'border-yellow-600' : 'border-[var(--color-neo-border)]'
+  return (
+    <div>
+      <div className="text-xs font-mono text-[var(--color-neo-text-secondary)] mb-1">{label}</div>
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        disabled={disabled}
+        className={`neo-btn text-sm py-2 px-3 bg-white border-3 ${border} font-mono w-full ${
+          disabled ? 'opacity-60 cursor-not-allowed' : ''
+        }`}
+      >
+        {options.map((opt) => (
+          <option key={opt.value} value={opt.value}>
+            {opt.label}
+          </option>
+        ))}
+      </select>
+      {error && <div className="text-xs mt-1 text-[var(--color-neo-danger)]">{error}</div>}
+      {!error && warning && <div className="text-xs mt-1 text-yellow-800">{warning}</div>}
+    </div>
+  )
+}
+
+function CsvAgentOrderField({
+  label,
+  value,
+  onChange,
+  error,
+  warning,
+  disabled,
+  availability,
+  rawPlaceholder,
+}: {
+  label: string
+  value: string
+  onChange: (v: string) => void
+  error?: string
+  warning?: string
+  disabled?: boolean
+  availability?: { codex?: boolean; gemini?: boolean }
+  rawPlaceholder?: string
+}) {
+  const normalize = (raw: string) =>
+    raw
+      .replace(/;/g, ',')
+      .split(',')
+      .map((p) => p.trim().toLowerCase())
+      .filter(Boolean)
+
+  const allowed = new Set(['codex', 'gemini'])
+  const rawTokens = normalize(value)
+  const selected = rawTokens.filter((t) => allowed.has(t)) as Array<'codex' | 'gemini'>
+  const uniqueSelected = Array.from(new Set(selected)) as Array<'codex' | 'gemini'>
+
+  const setSelected = (next: Array<'codex' | 'gemini'>) => {
+    onChange(next.join(','))
+  }
+
+  const canSelect = (id: 'codex' | 'gemini') => {
+    const avail = availability?.[id]
+    return avail !== false
+  }
+
+  const toggle = (id: 'codex' | 'gemini', nextChecked: boolean) => {
+    if (disabled) return
+    if (nextChecked) {
+      if (!canSelect(id)) return
+      if (uniqueSelected.includes(id)) return
+      setSelected([...uniqueSelected, id])
+      return
+    }
+    setSelected(uniqueSelected.filter((x) => x !== id))
+  }
+
+  const move = (id: 'codex' | 'gemini', dir: -1 | 1) => {
+    const idx = uniqueSelected.indexOf(id)
+    if (idx < 0) return
+    const nextIdx = idx + dir
+    if (nextIdx < 0 || nextIdx >= uniqueSelected.length) return
+    const next = [...uniqueSelected]
+    const tmp = next[idx]
+    next[idx] = next[nextIdx]
+    next[nextIdx] = tmp
+    setSelected(next)
+  }
+
+  const border =
+    error ? 'border-[var(--color-neo-danger)]' : warning ? 'border-yellow-600' : 'border-[var(--color-neo-border)]'
+
+  return (
+    <div>
+      <div className="text-xs font-mono text-[var(--color-neo-text-secondary)] mb-1">{label}</div>
+      <div className={`neo-card p-3 border-3 ${border}`}>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+          {(['codex', 'gemini'] as const).map((id) => {
+            const avail = availability?.[id]
+            const checked = uniqueSelected.includes(id)
+            const disabledCheck = Boolean(disabled) || (avail === false && !checked)
+            const badge = avail === false ? 'Missing' : 'OK'
+            return (
+              <label
+                key={id}
+                className={`neo-card p-2 flex items-center justify-between ${disabledCheck ? 'opacity-60' : ''}`}
+              >
+                <span className="flex items-center gap-2">
+                  <span className="font-display font-bold text-sm">{id === 'codex' ? 'Codex' : 'Gemini'}</span>
+                  <span
+                    className={`neo-badge text-xs font-mono ${
+                      avail === false ? 'bg-[var(--color-neo-pending)] text-[var(--color-neo-text-on-bright)]' : 'bg-[var(--color-neo-bg)]'
+                    }`}
+                    title={avail === false ? 'CLI not detected on PATH' : 'CLI detected'}
+                  >
+                    {badge}
+                  </span>
+                </span>
+                <input
+                  type="checkbox"
+                  checked={checked}
+                  disabled={disabledCheck}
+                  onChange={(e) => toggle(id, e.target.checked)}
+                  className="w-5 h-5"
+                />
+              </label>
+            )
+          })}
+        </div>
+
+        {uniqueSelected.length > 1 && (
+          <div className="mt-3">
+            <div className="text-xs text-[var(--color-neo-text-secondary)] mb-1">Order (first tries first)</div>
+            <div className="space-y-2">
+              {uniqueSelected.map((id) => (
+                <div key={id} className="flex items-center justify-between gap-2">
+                  <span className="neo-badge font-mono">{id}</span>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      className="neo-btn neo-btn-secondary neo-btn-sm"
+                      onClick={() => move(id, -1)}
+                      disabled={disabled || uniqueSelected.indexOf(id) === 0}
+                      title="Move up"
+                    >
+                      <ArrowUp size={14} />
+                    </button>
+                    <button
+                      type="button"
+                      className="neo-btn neo-btn-secondary neo-btn-sm"
+                      onClick={() => move(id, 1)}
+                      disabled={disabled || uniqueSelected.indexOf(id) === uniqueSelected.length - 1}
+                      title="Move down"
+                    >
+                      <ArrowDown size={14} />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        <details className="mt-3">
+          <summary className="text-xs font-mono cursor-pointer select-none text-[var(--color-neo-text-secondary)]">
+            Advanced: raw CSV
+          </summary>
+          <div className="mt-2">
+            <TextField
+              label=""
+              value={value}
+              onChange={onChange}
+              placeholder={rawPlaceholder ?? 'e.g. codex,gemini'}
+              error={undefined}
+              warning={undefined}
+              disabled={disabled}
+            />
+          </div>
+        </details>
+      </div>
+
       {error && <div className="text-xs mt-1 text-[var(--color-neo-danger)]">{error}</div>}
       {!error && warning && <div className="text-xs mt-1 text-yellow-800">{warning}</div>}
     </div>

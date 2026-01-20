@@ -32,6 +32,7 @@ All notable changes to this fork will be listed here.
 - Activity retention/pruning: `AUTOCODER_ACTIVITY_KEEP_DAYS`, `AUTOCODER_ACTIVITY_KEEP_ROWS` (also configurable in UI Advanced → Logs)
 - UI polish: calmer hover states (no “everything jumps”), slightly softer rounding, Assistant button stays above the logs drawer
 - Settings UX: Advanced settings now use friendly labels/tooltips, warn on unsafe toggles, and disable Codex/Gemini-only options when their CLIs aren’t detected
+- Settings UX: replaced CSV “agent lists” with safe pickers + ordered selection; added in-UI Help modals for Review/Locks/Gatekeeper/QA/Planner/Initializer/Regression; file locks default to ON (with confirmation when disabling)
 - Codex CLI defaults: auto-detect `model` + `model_reasoning_effort` from `~/.codex/config.toml` (Codex reasoning effort now supports `xlow|xmedium|xhigh`)
 - Fix: Gatekeeper verify-branch sanitization is Python 3.10 compatible
 - Fix: `test_mcp` includes missing `json` import

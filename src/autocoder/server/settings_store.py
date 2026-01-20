@@ -45,7 +45,7 @@ class AdvancedSettings:
     gemini_model: str = ""
 
     # File locks / coordination
-    locks_enabled: bool = False
+    locks_enabled: bool = True
 
     # Worker behavior
     worker_verify: bool = True
