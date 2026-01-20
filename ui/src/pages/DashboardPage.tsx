@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { AlertTriangle, CheckCircle2, FolderOpen, Plus, Search } from 'lucide-react'
+import { AlertTriangle, CheckCircle2, FolderOpen, Plus, Search, Settings as SettingsIcon } from 'lucide-react'
 import type { ProjectSummary, SetupStatus } from '../lib/types'
 
 type SetupRow = {
@@ -25,6 +25,7 @@ interface DashboardPageProps {
   onOpenProject: (projectName: string) => void
   onDismissBackgroundRun: () => void
   onNewProject: () => void
+  onOpenSettings: () => void
 }
 
 export function DashboardPage({
@@ -35,6 +36,7 @@ export function DashboardPage({
   onOpenProject,
   onDismissBackgroundRun,
   onNewProject,
+  onOpenSettings,
 }: DashboardPageProps) {
   const [query, setQuery] = useState('')
 
@@ -64,6 +66,18 @@ export function DashboardPage({
             New Project
             <kbd className="hidden md:inline ml-1.5 px-1.5 py-0.5 text-xs bg-black/20 rounded font-mono">
               N
+            </kbd>
+          </button>
+          <button
+            type="button"
+            className="neo-btn neo-btn-secondary text-sm flex items-center gap-2"
+            onClick={onOpenSettings}
+            title="Global settings"
+          >
+            <SettingsIcon size={18} />
+            Settings
+            <kbd className="hidden md:inline ml-1.5 px-1.5 py-0.5 text-xs bg-black/10 rounded font-mono">
+              S
             </kbd>
           </button>
         </div>

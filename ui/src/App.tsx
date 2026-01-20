@@ -240,6 +240,12 @@ function App() {
         setShowSettings(true)
       }
 
+      // S : Global settings (Dashboard)
+      if ((e.key === 's' || e.key === 'S') && !selectedProject) {
+        e.preventDefault()
+        window.location.hash = '#/settings/advanced'
+      }
+
       // K : Knowledge files
       if ((e.key === 'k' || e.key === 'K') && selectedProject) {
         e.preventDefault()
@@ -647,35 +653,28 @@ function App() {
       >
         {route === 'settings' ? (
           <div className="max-w-6xl mx-auto">
-            {selectedProject ? (
-              <SettingsPage
-                initialTab={
-                  window.location.hash === '#/settings/advanced'
-                    ? 'advanced'
-                    : window.location.hash === '#/settings/models'
-                      ? 'models'
-                      : window.location.hash === '#/settings/generate'
-                        ? 'generate'
-                        : window.location.hash === '#/settings/config'
-                          ? 'config'
-                          : window.location.hash === '#/settings/diagnostics'
-                            ? 'diagnostics'
-                        : 'run'
-                }
-                projectName={selectedProject}
-                yoloEnabled={yoloEnabled}
-                runSettings={runSettings}
-                onChangeRunSettings={(next) => setRunSettings(next)}
-                onClose={() => (window.location.hash = '')}
-              />
-            ) : (
-              <div className="neo-card p-6">
-                <div className="font-display font-bold uppercase mb-2">Select a project</div>
-                <div className="text-sm text-[var(--color-neo-text-secondary)]">
-                  Settings are project-scoped. Go back and pick a project first.
-                </div>
-              </div>
-            )}
+            <SettingsPage
+              initialTab={
+                window.location.hash === '#/settings/advanced'
+                  ? 'advanced'
+                  : window.location.hash === '#/settings/models'
+                    ? 'models'
+                    : window.location.hash === '#/settings/generate'
+                      ? 'generate'
+                      : window.location.hash === '#/settings/config'
+                        ? 'config'
+                        : window.location.hash === '#/settings/diagnostics'
+                          ? 'diagnostics'
+                      : 'run'
+              }
+              projectName={selectedProject}
+              projects={projects ?? []}
+              onSelectProject={(name) => requestSelectProject(name)}
+              yoloEnabled={yoloEnabled}
+              runSettings={runSettings}
+              onChangeRunSettings={(next) => setRunSettings(next)}
+              onClose={() => (window.location.hash = '')}
+            />
           </div>
         ) : !selectedProject ? (
           <DashboardPage
@@ -686,6 +685,9 @@ function App() {
             onOpenProject={(name) => requestSelectProject(name)}
             onDismissBackgroundRun={() => setBackgroundRunProject(null)}
             onNewProject={() => setShowNewProjectModal(true)}
+            onOpenSettings={() => {
+              window.location.hash = '#/settings/advanced'
+            }}
           />
         ) : (
           <div className="space-y-8">

@@ -5,7 +5,7 @@
  * Wider, less cramped settings hub. Mirrors the quick Settings modal but with an Advanced tab.
  */
 
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { Settings as SettingsIcon, SlidersHorizontal, Brain, Sparkles, FileText, Activity } from 'lucide-react'
 import { ModelSettingsContent } from '../components/ModelSettingsContent'
 import { AdvancedSettingsContent } from '../components/AdvancedSettingsContent'
@@ -15,27 +15,42 @@ import { ProjectConfigEditor } from '../components/ProjectConfigEditor'
 import { ProjectMaintenance } from '../components/ProjectMaintenance'
 import { DiagnosticsContent } from '../components/DiagnosticsContent'
 import type { RunSettings } from '../components/SettingsModal'
+import type { ProjectSummary } from '../lib/types'
 
 type SettingsPageTab = 'run' | 'models' | 'generate' | 'config' | 'advanced' | 'diagnostics'
 
 export function SettingsPage({
   initialTab = 'run',
   projectName,
+  projects,
+  onSelectProject,
   yoloEnabled,
   runSettings,
   onChangeRunSettings,
   onClose,
 }: {
   initialTab?: SettingsPageTab
-  projectName: string
+  projectName: string | null
+  projects: ProjectSummary[]
+  onSelectProject: (name: string | null) => void
   yoloEnabled: boolean
   runSettings: RunSettings
   onChangeRunSettings: (next: RunSettings) => void
   onClose: () => void
 }) {
   const [tab, setTab] = useState<SettingsPageTab>(initialTab)
+  const activeScope: 'global' | 'project' = useMemo(() => {
+    if (tab === 'advanced' || tab === 'diagnostics') return 'global'
+    if (tab === 'models' || tab === 'generate' || tab === 'config') return 'project'
+    return projectName ? 'project' : 'global'
+  }, [projectName, tab])
 
   const canUseParallel = !yoloEnabled
+  const projectTabsEnabled = Boolean(projectName)
+
+  const projectOptions = useMemo(() => {
+    return [...projects].sort((a, b) => a.name.localeCompare(b.name))
+  }, [projects])
 
   const setTabWithHash = (next: SettingsPageTab) => {
     setTab(next)
@@ -65,9 +80,65 @@ export function SettingsPage({
               <div className="text-sm text-[var(--color-neo-text-secondary)]">Run, models, and advanced configuration.</div>
             </div>
           </div>
-          <button className="neo-btn neo-btn-secondary text-sm" onClick={onClose} title="Back to project">
+          <button
+            className="neo-btn neo-btn-secondary text-sm"
+            onClick={onClose}
+            title={projectName ? 'Back to project' : 'Back to dashboard'}
+          >
             Back
           </button>
+        </div>
+
+        <div className="mt-4 grid grid-cols-1 lg:grid-cols-3 gap-3">
+          <div className="neo-card neo-card-flat p-3">
+            <div className="text-xs font-mono text-[var(--color-neo-text-secondary)] mb-2">Scope</div>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                className={`neo-btn neo-btn-sm ${activeScope === 'project' ? 'bg-[var(--color-neo-accent)] text-white' : 'neo-btn-secondary'}`}
+                onClick={() => setTabWithHash('models')}
+              >
+                Project
+              </button>
+              <button
+                type="button"
+                className={`neo-btn neo-btn-sm ${activeScope === 'global' ? 'bg-[var(--color-neo-accent)] text-white' : 'neo-btn-secondary'}`}
+                onClick={() => setTabWithHash('advanced')}
+              >
+                Global
+              </button>
+            </div>
+            <div className="text-xs text-[var(--color-neo-text-secondary)] mt-2">
+              Global = this machine/UI. Project = per-project config.
+            </div>
+          </div>
+
+          <div className="neo-card neo-card-flat p-3 lg:col-span-2">
+            <div className="flex flex-col sm:flex-row sm:items-end gap-3">
+              <div className="flex-1 min-w-[220px]">
+                <div className="text-xs font-mono text-[var(--color-neo-text-secondary)] mb-2">Project (optional)</div>
+                <select
+                  className="neo-btn text-sm py-2 px-3 bg-white border-3 border-[var(--color-neo-border)] font-display w-full"
+                  value={projectName ?? ''}
+                  onChange={(e) => onSelectProject(e.target.value ? e.target.value : null)}
+                  title="Select project to enable project-scoped tabs"
+                >
+                  <option value="">— Select a project —</option>
+                  {projectOptions.map((p) => (
+                    <option key={p.name} value={p.name}>
+                      {p.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {!projectTabsEnabled && (
+                <div className="text-sm text-[var(--color-neo-text-secondary)]">
+                  Pick a project to unlock <span className="font-display font-semibold">Models / Generate / Config</span>.
+                </div>
+              )}
+            </div>
+          </div>
         </div>
 
         <div className="mt-4 flex flex-wrap gap-2">
@@ -79,22 +150,31 @@ export function SettingsPage({
             Run
           </button>
           <button
-            className={`neo-btn text-sm ${tab === 'models' ? 'bg-[var(--color-neo-accent)] text-white' : 'neo-btn-secondary'}`}
+            className={`neo-btn text-sm ${tab === 'models' ? 'bg-[var(--color-neo-accent)] text-white' : 'neo-btn-secondary'} ${
+              projectTabsEnabled ? '' : 'opacity-70'
+            }`}
             onClick={() => setTabWithHash('models')}
+            title={!projectTabsEnabled ? 'Select a project to edit models' : undefined}
           >
             <Brain size={18} />
             Models
           </button>
           <button
-            className={`neo-btn text-sm ${tab === 'generate' ? 'bg-[var(--color-neo-accent)] text-white' : 'neo-btn-secondary'}`}
+            className={`neo-btn text-sm ${tab === 'generate' ? 'bg-[var(--color-neo-accent)] text-white' : 'neo-btn-secondary'} ${
+              projectTabsEnabled ? '' : 'opacity-70'
+            }`}
             onClick={() => setTabWithHash('generate')}
+            title={!projectTabsEnabled ? 'Select a project to generate specs' : undefined}
           >
             <Sparkles size={18} />
             Generate
           </button>
           <button
-            className={`neo-btn text-sm ${tab === 'config' ? 'bg-[var(--color-neo-accent)] text-white' : 'neo-btn-secondary'}`}
+            className={`neo-btn text-sm ${tab === 'config' ? 'bg-[var(--color-neo-accent)] text-white' : 'neo-btn-secondary'} ${
+              projectTabsEnabled ? '' : 'opacity-70'
+            }`}
             onClick={() => setTabWithHash('config')}
+            title={!projectTabsEnabled ? 'Select a project to edit autocoder.yaml' : undefined}
           >
             <FileText size={18} />
             Config
@@ -171,25 +251,52 @@ export function SettingsPage({
           )}
         </div>
       ) : tab === 'models' ? (
-        <ModelSettingsContent
-          projectName={projectName}
-          onPresetApplied={(presetId) =>
-            onChangeRunSettings({
-              ...runSettings,
-              parallelPreset: presetId as any,
-            })
-          }
-        />
+        projectName ? (
+          <ModelSettingsContent
+            projectName={projectName}
+            onPresetApplied={(presetId) =>
+              onChangeRunSettings({
+                ...runSettings,
+                parallelPreset: presetId as any,
+              })
+            }
+          />
+        ) : (
+          <div className="neo-card p-6">
+            <div className="font-display font-bold uppercase mb-2">Select a project</div>
+            <div className="text-sm text-[var(--color-neo-text-secondary)]">
+              Models are project-scoped. Pick a project from the selector above to continue.
+            </div>
+          </div>
+        )
       ) : tab === 'generate' ? (
-        <div className="space-y-6">
-          <GsdToSpecPanel projectName={projectName} />
-          <MultiModelGeneratePanel projectName={projectName} />
-        </div>
+        projectName ? (
+          <div className="space-y-6">
+            <GsdToSpecPanel projectName={projectName} />
+            <MultiModelGeneratePanel projectName={projectName} />
+          </div>
+        ) : (
+          <div className="neo-card p-6">
+            <div className="font-display font-bold uppercase mb-2">Select a project</div>
+            <div className="text-sm text-[var(--color-neo-text-secondary)]">
+              Spec generation is project-scoped. Pick a project from the selector above to continue.
+            </div>
+          </div>
+        )
       ) : tab === 'config' ? (
-        <div className="space-y-6">
-          <ProjectConfigEditor projectName={projectName} />
-          <ProjectMaintenance projectName={projectName} />
-        </div>
+        projectName ? (
+          <div className="space-y-6">
+            <ProjectConfigEditor projectName={projectName} />
+            <ProjectMaintenance projectName={projectName} />
+          </div>
+        ) : (
+          <div className="neo-card p-6">
+            <div className="font-display font-bold uppercase mb-2">Select a project</div>
+            <div className="text-sm text-[var(--color-neo-text-secondary)]">
+              Project config is per-project. Pick a project from the selector above to continue.
+            </div>
+          </div>
+        )
       ) : tab === 'diagnostics' ? (
         <DiagnosticsContent />
       ) : (
