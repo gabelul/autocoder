@@ -326,6 +326,10 @@ By default, feature implementation uses the **Claude Agent SDK** worker. You can
 - Iterations (patch worker): `AUTOCODER_WORKER_PATCH_MAX_ITERATIONS` (default `2`)
 - Provider order (multi): `AUTOCODER_WORKER_PATCH_AGENTS` (default `codex,gemini`)
 
+**Codex defaults (nice quality-of-life):** if you leave Codex model settings blank, AutoCoder will try to read Codex CLI defaults from `~/.codex/config.toml` (`model` and `model_reasoning_effort`). You can still override via env (`AUTOCODER_CODEX_MODEL`, `AUTOCODER_CODEX_REASONING_EFFORT`) or in the Web UI (Advanced Settings).
+
+Codex reasoning effort accepts: `low|medium|high|xlow|xmedium|xhigh` (Codex CLI uses `model_reasoning_effort`).
+
 Per-project (recommended): store these under `worker:` in the target repo’s `autocoder.yaml` so each project carries its own defaults.
 
 In the Web UI: Settings -> Advanced -> Automation -> Feature Workers.

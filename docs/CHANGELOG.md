@@ -16,7 +16,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Dashboard shows a “still running in the background” banner after leaving a running project.
 - Softer hover feel: cards don’t “jump” on hover unless explicitly opted-in; shadows are a bit less intense.
 - Assistant button sits higher to avoid bottom-edge overlap.
+- Settings UX: clearer labels/tooltips + safety warnings; Codex/Gemini-only options disable automatically if their CLIs aren’t detected.
 - UI auto-build logs which file triggered a rebuild; optional mtime tolerance for FAT32/exFAT (`AUTOCODER_UI_MTIME_TOLERANCE_S`).
+
+### Multi-Model
+- Codex CLI defaults: auto-detect `model` + `model_reasoning_effort` from `~/.codex/config.toml` (Codex reasoning effort supports `xlow|xmedium|xhigh`).
 
 ## [2.0.0] - 2025-01-07
 
