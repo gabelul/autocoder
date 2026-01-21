@@ -54,8 +54,23 @@ async def _make_multimodal_message(content_blocks: list[dict]) -> AsyncGenerator
         "session_id": "default",
     }
 
-# Root directory of the project
-ROOT_DIR = Path(__file__).parent.parent.parent
+def _find_repo_root(start: Path) -> Path | None:
+    """
+    Locate the repo root by finding .claude/commands/create-spec.md.
+
+    This supports running from source checkouts where .claude/ lives at the repo root
+    (not inside src/).
+    """
+    target = Path(".claude") / "commands" / "create-spec.md"
+    for parent in [start, *start.parents]:
+        candidate = parent / target
+        if candidate.exists():
+            return parent
+    return None
+
+
+# Root directory of the repo (falls back to src/ if not found)
+ROOT_DIR = _find_repo_root(Path(__file__).resolve()) or Path(__file__).parent.parent.parent
 
 
 class SpecChatSession:
