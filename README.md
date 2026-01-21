@@ -161,7 +161,7 @@ autocoder-ui
 - Settings → **Project Config** → **Danger Zone**:
   - **Reset** clears runtime artifacts (`agent_system.db`, `.autocoder/`, `worktrees/`).
   - **Full reset** also wipes `prompts/` so the spec must be recreated.
-  - **Delete** removes the project from the registry (optional delete-on-disk).
+  - **Delete** shows a safety summary (git status, non-runtime files) and requires typed confirmation before deleting on disk.
 
 If the agent fails due to missing authentication, the UI log stream will emit a short fix-it hint (e.g. `claude login` or env var guidance).
 

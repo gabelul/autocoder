@@ -25,6 +25,15 @@ export function useProject(name: string | null) {
   })
 }
 
+export function useProjectDeleteInfo(name: string | null, enabled: boolean = true) {
+  return useQuery({
+    queryKey: ['project-delete-info', name],
+    queryFn: () => api.getProjectDeleteInfo(name!),
+    enabled: !!name && enabled,
+    staleTime: 30_000,
+  })
+}
+
 export function useCreateProject() {
   const queryClient = useQueryClient()
 

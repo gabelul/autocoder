@@ -22,6 +22,21 @@ export interface ProjectDetail extends ProjectSummary {
   prompts_dir: string
 }
 
+export interface ProjectDeleteInfo {
+  name: string
+  path: string
+  exists: boolean
+  agent_running: boolean
+  has_git: boolean
+  git_dirty: boolean
+  runtime_only: boolean
+  has_prompts: boolean
+  has_spec: boolean
+  non_runtime_entries: string[]
+  non_runtime_count: number
+  non_runtime_truncated: boolean
+}
+
 // Filesystem types
 export interface DriveInfo {
   letter: string

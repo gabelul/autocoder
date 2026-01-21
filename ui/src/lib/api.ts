@@ -5,6 +5,7 @@
 import type {
   ProjectSummary,
   ProjectDetail,
+  ProjectDeleteInfo,
   ProjectPrompts,
   KnowledgeFilesResponse,
   KnowledgeFile,
@@ -76,6 +77,10 @@ export async function createProject(
 
 export async function getProject(name: string): Promise<ProjectDetail> {
   return fetchJSON(`/projects/${encodeURIComponent(name)}`)
+}
+
+export async function getProjectDeleteInfo(name: string): Promise<ProjectDeleteInfo> {
+  return fetchJSON(`/projects/${encodeURIComponent(name)}/delete-info`)
 }
 
 export async function deleteProject(name: string, deleteFiles: boolean = false): Promise<void> {

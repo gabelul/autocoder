@@ -9,6 +9,7 @@ Uses project registry for path lookups instead of fixed generations/ directory.
 import re
 import os
 import shutil
+import subprocess
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
@@ -17,6 +18,7 @@ from ..schemas import (
     ProjectCreate,
     ProjectSummary,
     ProjectDetail,
+    ProjectDeleteInfo,
     ProjectPrompts,
     ProjectPromptsUpdate,
     ProjectStats,
@@ -112,6 +114,55 @@ _SPEC_TEMPLATE_MARKERS = (
     "Replace with your actual project specification",
     "Describe your project in 2-3 sentences",
 )
+
+_RUNTIME_ARTIFACTS = {
+    ".autocoder",
+    "worktrees",
+    "agent_system.db",
+    "agent_system.db-wal",
+    "agent_system.db-shm",
+    ".agent.lock",
+}
+
+
+def _git_dirty(project_dir: Path) -> bool:
+    """Return True if git working tree has uncommitted changes."""
+    try:
+        result = subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=project_dir,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except Exception:
+        return False
+    if result.returncode != 0:
+        return False
+    return bool(result.stdout.strip())
+
+
+def _collect_non_runtime_entries(project_dir: Path, max_items: int = 12) -> tuple[list[str], int, bool]:
+    """Collect top-level entries that are not runtime artifacts."""
+    entries: list[str] = []
+    total = 0
+    truncated = False
+
+    try:
+        for entry in project_dir.iterdir():
+            name = entry.name
+            if name in _RUNTIME_ARTIFACTS:
+                continue
+            total += 1
+            label = f"{name}/" if entry.is_dir() else name
+            if len(entries) < max_items:
+                entries.append(label)
+            else:
+                truncated = True
+    except Exception:
+        return entries, total, truncated
+
+    return entries, total, truncated
 
 
 def _is_spec_placeholder(spec_content: str) -> bool:
@@ -284,6 +335,52 @@ async def get_project(name: str):
         setup_required=setup_required,
         stats=stats,
         prompts_dir=str(prompts_dir),
+    )
+
+
+@router.get("/{name}/delete-info", response_model=ProjectDeleteInfo)
+async def get_project_delete_info(name: str):
+    """Return safety metadata for deleting a project."""
+    _init_imports()
+    _, _, get_project_path, _, _ = _get_registry_functions()
+
+    name = validate_project_name(name)
+    project_dir = get_project_path(name)
+
+    if not project_dir:
+        raise HTTPException(status_code=404, detail=f"Project '{name}' not found")
+
+    exists = project_dir.exists()
+    lock_file = project_dir / ".agent.lock"
+    agent_running = lock_file.exists() if exists else False
+    has_git = (project_dir / ".git").exists() if exists else False
+    git_dirty = _git_dirty(project_dir) if has_git else False
+    has_spec = _check_spec_exists(project_dir) if exists else False
+
+    prompts_dir = _get_project_prompts_dir(project_dir) if exists else project_dir / "prompts"
+    has_prompts = prompts_dir.exists() if exists else False
+
+    non_runtime_entries: list[str] = []
+    non_runtime_count = 0
+    non_runtime_truncated = False
+    if exists:
+        non_runtime_entries, non_runtime_count, non_runtime_truncated = _collect_non_runtime_entries(project_dir)
+
+    runtime_only = non_runtime_count == 0
+
+    return ProjectDeleteInfo(
+        name=name,
+        path=project_dir.as_posix(),
+        exists=exists,
+        agent_running=agent_running,
+        has_git=has_git,
+        git_dirty=git_dirty,
+        runtime_only=runtime_only,
+        has_prompts=has_prompts,
+        has_spec=has_spec,
+        non_runtime_entries=non_runtime_entries,
+        non_runtime_count=non_runtime_count,
+        non_runtime_truncated=non_runtime_truncated,
     )
 
 

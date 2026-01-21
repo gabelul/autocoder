@@ -49,6 +49,22 @@ class ProjectDetail(BaseModel):
     prompts_dir: str
 
 
+class ProjectDeleteInfo(BaseModel):
+    """Safety metadata for deleting a project."""
+    name: str
+    path: str
+    exists: bool
+    agent_running: bool = False
+    has_git: bool = False
+    git_dirty: bool = False
+    runtime_only: bool = False
+    has_prompts: bool = False
+    has_spec: bool = False
+    non_runtime_entries: list[str] = []
+    non_runtime_count: int = 0
+    non_runtime_truncated: bool = False
+
+
 class ProjectPrompts(BaseModel):
     """Project prompt files content."""
     app_spec: str = ""

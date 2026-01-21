@@ -1,6 +1,6 @@
-import { useState } from 'react'
-import { RotateCcw, Trash2, AlertTriangle } from 'lucide-react'
-import { useDeleteProject, useResetProject } from '../hooks/useProjects'
+import { useEffect, useState } from 'react'
+import { RotateCcw, Trash2, AlertTriangle, Copy, X, FolderOpen, ShieldAlert } from 'lucide-react'
+import { useDeleteProject, useProjectDeleteInfo, useResetProject } from '../hooks/useProjects'
 import { ConfirmationDialog } from './ConfirmationDialog'
 
 interface ProjectMaintenanceProps {
@@ -10,13 +10,24 @@ interface ProjectMaintenanceProps {
 export function ProjectMaintenance({ projectName }: ProjectMaintenanceProps) {
   const resetProject = useResetProject()
   const deleteProject = useDeleteProject()
-
   const [confirmReset, setConfirmReset] = useState(false)
   const [confirmFullReset, setConfirmFullReset] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [deleteFiles, setDeleteFiles] = useState(false)
+  const [confirmName, setConfirmName] = useState('')
+  const [copied, setCopied] = useState(false)
   const [message, setMessage] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+
+  const deleteInfo = useProjectDeleteInfo(projectName, confirmDelete)
+
+  useEffect(() => {
+    if (!confirmDelete) {
+      setDeleteFiles(false)
+      setConfirmName('')
+      setCopied(false)
+    }
+  }, [confirmDelete])
 
   const handleReset = async (fullReset: boolean) => {
     setError(null)
@@ -38,6 +49,26 @@ export function ProjectMaintenance({ projectName }: ProjectMaintenanceProps) {
       window.location.hash = ''
     } catch (e: any) {
       setError(String(e?.message || e))
+    }
+  }
+
+  const requiresTypedConfirm = Boolean(
+    deleteFiles ||
+    deleteInfo.data?.git_dirty ||
+    deleteInfo.data?.has_prompts ||
+    deleteInfo.data?.has_spec ||
+    (deleteInfo.data && !deleteInfo.data.runtime_only)
+  )
+  const typedOk = !requiresTypedConfirm || confirmName.trim() === projectName
+  const isBlocked = Boolean(deleteInfo.data?.agent_running)
+
+  const handleCopy = async (value: string) => {
+    try {
+      await navigator.clipboard.writeText(value)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1500)
+    } catch {
+      // no-op
     }
   }
 
@@ -87,7 +118,7 @@ export function ProjectMaintenance({ projectName }: ProjectMaintenanceProps) {
         <div className="neo-card p-3">
           <div className="font-display font-bold uppercase text-sm mb-2">Full reset</div>
           <div className="text-xs text-[var(--color-neo-text-secondary)] mb-3">
-            Wipes <span className="font-mono">prompts/</span> + spec status. You’ll need to recreate the spec.
+            Wipes <span className="font-mono">prompts/</span> + spec status. You will need to recreate the spec.
           </div>
           <button
             className="neo-btn neo-btn-warning w-full text-sm"
@@ -101,14 +132,9 @@ export function ProjectMaintenance({ projectName }: ProjectMaintenanceProps) {
 
         <div className="neo-card p-3">
           <div className="font-display font-bold uppercase text-sm mb-2">Delete project</div>
-          <label className="flex items-center gap-2 text-xs text-[var(--color-neo-text-secondary)] mb-2">
-            <input
-              type="checkbox"
-              checked={deleteFiles}
-              onChange={(e) => setDeleteFiles(e.target.checked)}
-            />
-            Also delete files on disk
-          </label>
+          <div className="text-xs text-[var(--color-neo-text-secondary)] mb-3">
+            Remove the registry entry, optionally delete files on disk.
+          </div>
           <button
             className="neo-btn neo-btn-danger w-full text-sm"
             onClick={() => setConfirmDelete(true)}
@@ -119,6 +145,149 @@ export function ProjectMaintenance({ projectName }: ProjectMaintenanceProps) {
           </button>
         </div>
       </div>
+
+      {confirmDelete && (
+        <div className="neo-modal-backdrop">
+          <div
+            className="neo-modal w-full max-w-2xl p-6"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <div className="font-display font-bold uppercase">Delete project</div>
+                <div className="text-sm text-[var(--color-neo-text-secondary)]">
+                  This is permanent if you delete files on disk.
+                </div>
+              </div>
+              <button className="neo-btn neo-btn-secondary" onClick={() => setConfirmDelete(false)}>
+                <X size={16} />
+                Close
+              </button>
+            </div>
+
+            {deleteInfo.isLoading ? (
+              <div className="mt-4 text-sm text-[var(--color-neo-text-secondary)]">Loading project info…</div>
+            ) : deleteInfo.error ? (
+              <div className="mt-4 neo-card p-3 border-3 border-[var(--color-neo-danger)] text-sm text-[var(--color-neo-danger)]">
+                {deleteInfo.error instanceof Error ? deleteInfo.error.message : 'Failed to load delete info'}
+              </div>
+            ) : deleteInfo.data ? (
+              <div className="mt-4 space-y-3">
+                <div className="neo-card p-3">
+                  <div className="flex items-center gap-2 text-sm">
+                    <FolderOpen size={16} />
+                    <span className="font-mono break-all">{deleteInfo.data.path}</span>
+                  </div>
+                  {!deleteInfo.data.exists && (
+                    <div className="mt-2 text-xs text-[var(--color-neo-danger)]">
+                      Project path is missing. Deleting will remove the registry entry only.
+                    </div>
+                  )}
+                  <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
+                    <button
+                      className="neo-btn neo-btn-secondary text-xs"
+                      onClick={() => handleCopy(deleteInfo.data.path)}
+                    >
+                      <Copy size={14} />
+                      {copied ? 'Copied' : 'Copy path'}
+                    </button>
+                    {deleteInfo.data.has_git && (
+                      <span className={`neo-badge ${deleteInfo.data.git_dirty ? 'bg-[var(--color-neo-danger)] text-white' : 'bg-[var(--color-neo-progress)] text-[var(--color-neo-text-on-bright)]'}`}>
+                        {deleteInfo.data.git_dirty ? 'Git dirty' : 'Git clean'}
+                      </span>
+                    )}
+                    {deleteInfo.data.runtime_only && (
+                      <span className="neo-badge bg-[var(--color-neo-done)] text-[var(--color-neo-text-on-bright)]">Runtime only</span>
+                    )}
+                  </div>
+                </div>
+
+                {!deleteInfo.data.runtime_only && (
+                  <div className="neo-card p-3 border-3 border-[var(--color-neo-danger)]/40">
+                    <div className="flex items-center gap-2 font-display font-bold text-sm">
+                      <ShieldAlert size={16} />
+                      Non-runtime files detected
+                    </div>
+                    <div className="text-xs text-[var(--color-neo-text-secondary)] mt-1">
+                      These folders/files are not runtime artifacts and may contain your work.
+                    </div>
+                    {deleteInfo.data.non_runtime_entries.length > 0 && (
+                      <ul className="mt-2 text-xs font-mono space-y-1">
+                        {deleteInfo.data.non_runtime_entries.map((entry) => (
+                          <li key={entry}>{entry}</li>
+                        ))}
+                        {deleteInfo.data.non_runtime_truncated && (
+                          <li>…and {Math.max(0, deleteInfo.data.non_runtime_count - deleteInfo.data.non_runtime_entries.length)} more</li>
+                        )}
+                      </ul>
+                    )}
+                  </div>
+                )}
+
+                {(deleteInfo.data.has_prompts || deleteInfo.data.has_spec) && (
+                  <div className="neo-card p-3">
+                    <div className="text-sm font-display font-bold uppercase">Spec assets</div>
+                    <div className="text-xs text-[var(--color-neo-text-secondary)] mt-1">
+                      Prompts/specs exist for this project. Make sure you have a backup before deleting files.
+                    </div>
+                  </div>
+                )}
+
+                {isBlocked && (
+                  <div className="neo-card p-3 border-3 border-[var(--color-neo-danger)] text-sm text-[var(--color-neo-danger)]">
+                    Stop the agent before deleting this project.
+                  </div>
+                )}
+
+                <label className="flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={deleteFiles}
+                    disabled={!deleteInfo.data.exists}
+                    onChange={(e) => setDeleteFiles(e.target.checked)}
+                  />
+                  Also delete files on disk
+                </label>
+
+                {requiresTypedConfirm && (
+                  <div>
+                    <div className="text-xs text-[var(--color-neo-text-secondary)]">
+                      Type <span className="font-mono">{projectName}</span> to confirm.
+                    </div>
+                    <input
+                      className="neo-input w-full mt-2"
+                      value={confirmName}
+                      onChange={(e) => setConfirmName(e.target.value)}
+                      placeholder={projectName}
+                    />
+                  </div>
+                )}
+
+                <div className="flex justify-end gap-2">
+                  <button className="neo-btn neo-btn-secondary" onClick={() => setConfirmDelete(false)}>
+                    Cancel
+                  </button>
+                  <button
+                    className="neo-btn neo-btn-danger"
+                    onClick={async () => {
+                      await handleDelete()
+                      setConfirmDelete(false)
+                    }}
+                    disabled={deleteProject.isPending || isBlocked || !typedOk}
+                  >
+                    <Trash2 size={16} />
+                    Delete
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="mt-4 text-sm text-[var(--color-neo-text-secondary)]">
+                No delete info available.
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       <ConfirmationDialog
         isOpen={confirmReset}
@@ -142,18 +311,6 @@ export function ProjectMaintenance({ projectName }: ProjectMaintenanceProps) {
         onConfirm={async () => {
           setConfirmFullReset(false)
           await handleReset(true)
-        }}
-      />
-
-      <ConfirmationDialog
-        isOpen={confirmDelete}
-        title="Delete project?"
-        message={`This removes "${projectName}" from the registry${deleteFiles ? ' and deletes files on disk' : ''}.`}
-        confirmText="Delete"
-        onCancel={() => setConfirmDelete(false)}
-        onConfirm={async () => {
-          setConfirmDelete(false)
-          await handleDelete()
         }}
       />
     </div>
