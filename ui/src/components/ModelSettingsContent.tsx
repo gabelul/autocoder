@@ -7,8 +7,9 @@
  */
 
 import { useEffect, useMemo, useState } from 'react'
-import { Brain } from 'lucide-react'
+import { Brain, Info } from 'lucide-react'
 import { useApplyPreset, useModelSettings, usePresets, useUpdateModelSettings } from '../hooks/useModelSettings'
+import { HelpModal } from './HelpModal'
 
 export function ModelSettingsContent({
   projectName,
@@ -31,6 +32,7 @@ export function ModelSettingsContent({
     haiku: true,
   })
   const [assistantModel, setAssistantModel] = useState<'auto' | 'opus' | 'sonnet' | 'haiku'>('auto')
+  const [showHelp, setShowHelp] = useState(false)
 
   useEffect(() => {
     if (settings?.preset) setSelectedPreset(settings.preset)
@@ -99,6 +101,14 @@ export function ModelSettingsContent({
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="font-display font-bold uppercase">Models</div>
         <div className="flex gap-2">
+          <button
+            className="neo-btn neo-btn-secondary text-sm"
+            onClick={() => setShowHelp(true)}
+            title="Explain model settings"
+          >
+            <Info size={16} />
+            Help
+          </button>
           <button
             className={`neo-btn text-sm ${mode === 'preset' ? 'bg-[var(--color-neo-accent)] text-white' : 'neo-btn-secondary'}`}
             onClick={() => setMode('preset')}
@@ -300,6 +310,36 @@ export function ModelSettingsContent({
           ))}
         </div>
       </div>
+
+      <HelpModal isOpen={showHelp} title="Model Settings — what each knob does" onClose={() => setShowHelp(false)}>
+        <div className="space-y-3 text-sm">
+          <p>
+            These settings control <span className="font-bold">Claude model selection</span> for feature workers and UI
+            assistant chat.
+          </p>
+          <div className="neo-card p-3 bg-[var(--color-neo-bg)] space-y-2">
+            <div className="font-display font-bold uppercase text-xs">Presets</div>
+            <p className="text-[var(--color-neo-text-secondary)]">
+              Quick bundles (Quality/Balanced/Economy). Best default for most runs.
+            </p>
+          </div>
+          <div className="neo-card p-3 bg-[var(--color-neo-bg)] space-y-2">
+            <div className="font-display font-bold uppercase text-xs">Custom</div>
+            <p className="text-[var(--color-neo-text-secondary)]">
+              Manually choose which tiers are available (Opus/Sonnet/Haiku). Useful for cost control.
+            </p>
+          </div>
+          <div className="neo-card p-3 bg-[var(--color-neo-bg)] space-y-2">
+            <div className="font-display font-bold uppercase text-xs">Auto‑Detect Simple Tasks</div>
+            <p className="text-[var(--color-neo-text-secondary)]">
+              Lets AutoCoder pick cheaper models for low‑risk tasks (tests/docs). Turn off if you want strict quality.
+            </p>
+          </div>
+          <div className="text-xs text-[var(--color-neo-text-secondary)]">
+            Assistant Chat Model only affects the in‑UI assistant, not feature workers.
+          </div>
+        </div>
+      </HelpModal>
     </div>
   )
 }

@@ -85,22 +85,22 @@ class EngineSettings(BaseModel):
                 "implement": EngineChain(
                     enabled=True,
                     max_iterations=2,
-                    engines=["codex_cli", "gemini_cli", "claude_patch"],
+                    engines=["claude_patch"],
                 ),
                 "qa_fix": EngineChain(
                     enabled=True,
                     max_iterations=2,
-                    engines=["codex_cli", "gemini_cli", "claude_patch"],
+                    engines=["claude_patch"],
                 ),
                 "review": EngineChain(
                     enabled=True,
                     max_iterations=1,
-                    engines=["claude_review", "codex_cli", "gemini_cli"],
+                    engines=["claude_review"],
                 ),
                 "spec_draft": EngineChain(
                     enabled=True,
                     max_iterations=1,
-                    engines=["codex_cli", "gemini_cli", "claude_spec"],
+                    engines=["claude_spec"],
                 ),
                 "spec_synthesize": EngineChain(
                     enabled=True,

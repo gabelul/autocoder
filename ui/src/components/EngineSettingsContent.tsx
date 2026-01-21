@@ -6,10 +6,11 @@
  */
 
 import { useEffect, useMemo, useState } from 'react'
-import { ArrowDown, ArrowUp, RefreshCcw, Save, Wrench } from 'lucide-react'
+import { ArrowDown, ArrowUp, Info, RefreshCcw, Save, Wrench } from 'lucide-react'
 import { useEngineSettings, useUpdateEngineSettings } from '../hooks/useEngineSettings'
 import { useSetupStatus } from '../hooks/useProjects'
 import type { EngineId, EngineSettings, EngineStage } from '../lib/types'
+import { HelpModal } from './HelpModal'
 
 type StageMeta = {
   id: EngineStage
@@ -85,6 +86,7 @@ export function EngineSettingsContent({ projectName }: { projectName: string }) 
   const { data: setup } = useSetupStatus()
 
   const [draft, setDraft] = useState<EngineSettings | null>(null)
+  const [showHelp, setShowHelp] = useState(false)
 
   useEffect(() => {
     if (data) setDraft(data)
@@ -163,6 +165,14 @@ export function EngineSettingsContent({ projectName }: { projectName: string }) 
           <div className="flex items-center gap-2">
             <button
               className="neo-btn neo-btn-secondary text-sm"
+              onClick={() => setShowHelp(true)}
+              title="Explain engine chains"
+            >
+              <Info size={16} />
+              Help
+            </button>
+            <button
+              className="neo-btn neo-btn-secondary text-sm"
               onClick={() => refetch()}
               disabled={isLoading}
               title="Reload"
@@ -207,7 +217,7 @@ export function EngineSettingsContent({ projectName }: { projectName: string }) 
           {STAGES.map((stage) => {
             const chain = draft.chains[stage.id]
             const allowed = STAGE_ALLOWED[stage.id]
-            const availableToAdd = allowed.filter((e) => !chain.engines.includes(e))
+            const availableToAdd = allowed.filter((e) => availability[e]).filter((e) => !chain.engines.includes(e))
             return (
               <div key={stage.id} className="neo-card p-4">
                 <div className="flex flex-wrap items-start justify-between gap-3">
@@ -250,7 +260,10 @@ export function EngineSettingsContent({ projectName }: { projectName: string }) 
                     const meta = ENGINE_LABELS[engine]
                     const isAvailable = availability[engine]
                     return (
-                      <div key={`${stage.id}-${engine}`} className="neo-card p-2 flex items-center justify-between gap-2">
+                      <div
+                        key={`${stage.id}-${engine}`}
+                        className={`neo-card p-2 flex items-center justify-between gap-2 ${isAvailable ? '' : 'opacity-70'}`}
+                      >
                         <div>
                           <div className="font-display text-sm font-bold">{meta.label}</div>
                           <div className={`text-[10px] ${isAvailable ? 'text-[var(--color-neo-text-secondary)]' : 'text-[var(--color-neo-danger)]'}`}>
@@ -288,25 +301,30 @@ export function EngineSettingsContent({ projectName }: { projectName: string }) 
                 </div>
 
                 <div className="mt-3 flex flex-wrap items-center gap-2">
-                  <select
-                    className="neo-btn text-sm py-2 px-3 bg-white border-3 border-[var(--color-neo-border)] font-display"
-                    value=""
-                    onChange={(e) => {
-                      const value = e.target.value as EngineId
-                      if (value) addEngine(stage.id, value)
-                    }}
-                  >
-                    <option value="">Add engine…</option>
-                    {availableToAdd.map((engine) => {
-                      const meta = ENGINE_LABELS[engine]
-                      const available = availability[engine]
-                      return (
-                        <option key={`${stage.id}-add-${engine}`} value={engine} disabled={!available}>
-                          {meta.label} {available ? '' : '(missing)'}
-                        </option>
-                      )
-                    })}
-                  </select>
+                  {availableToAdd.length > 0 ? (
+                    <select
+                      className="neo-btn text-sm py-2 px-3 bg-white border-3 border-[var(--color-neo-border)] font-display"
+                      value=""
+                      onChange={(e) => {
+                        const value = e.target.value as EngineId
+                        if (value) addEngine(stage.id, value)
+                      }}
+                    >
+                      <option value="">Add engine…</option>
+                      {availableToAdd.map((engine) => {
+                        const meta = ENGINE_LABELS[engine]
+                        return (
+                          <option key={`${stage.id}-add-${engine}`} value={engine}>
+                            {meta.label}
+                          </option>
+                        )
+                      })}
+                    </select>
+                  ) : (
+                    <div className="text-xs text-[var(--color-neo-text-secondary)]">
+                      No additional engines detected for this stage.
+                    </div>
+                  )}
                   <div className="text-xs text-[var(--color-neo-text-secondary)]">
                     Order matters. First engine runs first.
                   </div>
@@ -316,6 +334,30 @@ export function EngineSettingsContent({ projectName }: { projectName: string }) 
           })}
         </div>
       )}
+
+      <HelpModal isOpen={showHelp} title="Engine Chains — how this works" onClose={() => setShowHelp(false)}>
+        <div className="space-y-3 text-sm">
+          <p>
+            Engine chains define <span className="font-bold">who runs first</span> for each stage (feature workers, QA
+            fixes, review, spec drafts, initializer).
+          </p>
+          <div className="neo-card p-3 bg-[var(--color-neo-bg)] space-y-2">
+            <div className="font-display font-bold uppercase text-xs">Order matters</div>
+            <p className="text-[var(--color-neo-text-secondary)]">
+              Engines run top → bottom until a patch/review succeeds. Put the most reliable engine first.
+            </p>
+          </div>
+          <div className="neo-card p-3 bg-[var(--color-neo-bg)] space-y-2">
+            <div className="font-display font-bold uppercase text-xs">Claude-first defaults</div>
+            <p className="text-[var(--color-neo-text-secondary)]">
+              Defaults start with Claude. Add Codex/Gemini only if you want multi‑model passes and the CLIs are detected.
+            </p>
+          </div>
+          <div className="text-xs text-[var(--color-neo-text-secondary)]">
+            Missing CLIs are shown as “Not detected” and are skipped at runtime.
+          </div>
+        </div>
+      </HelpModal>
     </div>
   )
 }

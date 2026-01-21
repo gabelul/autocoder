@@ -10,7 +10,7 @@ import type { ActivityEvent } from '../lib/types'
 type ActivityFilter = 'all' | 'agents' | 'gatekeeper' | 'qa' | 'regression' | 'errors'
 
 function _parseTimestamp(ts: string): Date | null {
-  const raw = String(ts || '').trim()
+  const raw = typeof ts === 'string' ? ts.trim() : ''
   if (!raw) return null
   // SQLite CURRENT_TIMESTAMP: "YYYY-MM-DD HH:MM:SS" (UTC). Convert to ISO.
   const iso = raw.includes('T') ? raw : `${raw.replace(' ', 'T')}Z`

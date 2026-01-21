@@ -8,7 +8,7 @@ import { useActivityEvents } from '../hooks/useActivityEvents'
 import type { ActivityEvent } from '../lib/types'
 
 function formatTime(ts: string): string {
-  const raw = String(ts || '').trim()
+  const raw = typeof ts === 'string' ? ts.trim() : ''
   if (!raw) return ''
   const iso = raw.includes('T') ? raw : `${raw.replace(' ', 'T')}Z`
   const d = new Date(iso)
