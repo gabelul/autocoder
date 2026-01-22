@@ -13,6 +13,8 @@ import type { EngineId, EngineSettings, EngineStage } from '../lib/types'
 import { InlineNotice, type InlineNoticeType } from './InlineNotice'
 import { HelpModal } from './HelpModal'
 
+type HelpTopic = 'all' | EngineStage
+
 type StageMeta = {
   id: EngineStage
   title: string
@@ -88,6 +90,7 @@ export function EngineSettingsContent({ projectName }: { projectName: string }) 
 
   const [draft, setDraft] = useState<EngineSettings | null>(null)
   const [showHelp, setShowHelp] = useState(false)
+  const [helpTopic, setHelpTopic] = useState<HelpTopic>('all')
   const [notice, setNotice] = useState<{ type: InlineNoticeType; message: string } | null>(null)
   const noticeTimer = useRef<number | null>(null)
 
@@ -171,6 +174,44 @@ export function EngineSettingsContent({ projectName }: { projectName: string }) 
     }
   }
 
+  const openHelp = (topic: HelpTopic) => {
+    setHelpTopic(topic)
+    setShowHelp(true)
+  }
+
+  const helpContent: Record<EngineStage, { title: string; body: string }> = {
+    implement: {
+      title: 'Implement (feature worker chain)',
+      body:
+        'This chain is used to implement features. Order matters: engines are tried in sequence until the feature is implemented and submitted to Gatekeeper. Keep Claude first by default; add Codex/Gemini as extra “eyes” if you want.',
+    },
+    qa_fix: {
+      title: 'QA Fix (after Gatekeeper failure)',
+      body:
+        'If Gatekeeper rejects a feature (tests/lint/typecheck), AutoCoder can spawn a short-lived QA fixer that only targets the failure excerpt and resubmits. This chain controls which engines are tried for that fix loop.',
+    },
+    review: {
+      title: 'Review (Gatekeeper reviewers)',
+      body:
+        'Optional review step that runs before merge. Use this for “another pass” (style, safety, correctness) without changing feature scope. If disabled, Gatekeeper goes straight to verification commands.',
+    },
+    spec_draft: {
+      title: 'Spec Draft (planning)',
+      body:
+        'Draft engines used for planning/spec generation. These create draft artifacts that can then be synthesized into a single final spec/plan.',
+    },
+    spec_synthesize: {
+      title: 'Spec Synthesize (final merge)',
+      body:
+        'The final “merge drafts into one” engine. Claude is the default because it tends to be best at consolidating multiple drafts into one coherent spec.',
+    },
+    initializer: {
+      title: 'Initializer (backlog creation)',
+      body:
+        'Used to expand a project spec into a backlog of features (seed the database). This is typically Claude-based; add other engines only if you want extra draft diversity.',
+    },
+  }
+
   return (
     <div className="space-y-6">
       <div className="neo-card p-4">
@@ -187,7 +228,7 @@ export function EngineSettingsContent({ projectName }: { projectName: string }) 
           <div className="flex items-center gap-2">
             <button
               className="neo-btn neo-btn-secondary text-sm"
-              onClick={() => setShowHelp(true)}
+              onClick={() => openHelp('all')}
               title="Explain engine chains"
             >
               <Info size={16} />
@@ -219,6 +260,49 @@ export function EngineSettingsContent({ projectName }: { projectName: string }) 
         <InlineNotice type={notice.type} message={notice.message} onClose={() => setNotice(null)} />
       )}
 
+      <HelpModal isOpen={showHelp} title="Engine Chains — how this works" onClose={() => setShowHelp(false)}>
+        <div className="space-y-4 text-sm">
+          {helpTopic !== 'all' && (
+            <div className="flex items-center justify-between gap-3">
+              <div className="text-xs font-mono text-[var(--color-neo-text-secondary)]">
+                Tip: click other ⓘ icons for section-specific help.
+              </div>
+              <button className="neo-btn neo-btn-secondary text-sm" onClick={() => setHelpTopic('all')}>
+                Show all
+              </button>
+            </div>
+          )}
+
+          {helpTopic === 'all' ? (
+            <div className="space-y-3">
+              <div className="neo-card p-3 bg-[var(--color-neo-bg)]">
+                <div className="font-display font-bold uppercase">Engine chains (quick mental model)</div>
+                <div className="text-[var(--color-neo-text-secondary)] mt-1">
+                  Each stage has an ordered list of engines. AutoCoder tries them in order. Keep the first engine as your
+                  “default” and add others as optional fallbacks or second opinions.
+                </div>
+              </div>
+              {(Object.keys(helpContent) as EngineStage[]).map((stage) => (
+                <div key={stage} className="neo-card p-3 bg-[var(--color-neo-bg)]">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="font-display font-bold uppercase">{helpContent[stage].title}</div>
+                    <button className="neo-btn neo-btn-secondary text-sm" onClick={() => setHelpTopic(stage)}>
+                      Details
+                    </button>
+                  </div>
+                  <div className="text-[var(--color-neo-text-secondary)] mt-1">{helpContent[stage].body}</div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="neo-card p-4 bg-[var(--color-neo-bg)]">
+              <div className="font-display font-bold uppercase">{helpContent[helpTopic].title}</div>
+              <div className="text-[var(--color-neo-text-secondary)] mt-2">{helpContent[helpTopic].body}</div>
+            </div>
+          )}
+        </div>
+      </HelpModal>
+
       {validation.errors.length > 0 && (
         <div className="neo-card p-4 bg-[var(--color-neo-danger)]/10 border-[var(--color-neo-danger)]">
           <div className="font-display font-bold text-[var(--color-neo-danger)]">Fix before saving</div>
@@ -247,9 +331,19 @@ export function EngineSettingsContent({ projectName }: { projectName: string }) 
             return (
               <div key={stage.id} className="neo-card p-4">
                 <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div>
-                    <div className="font-display font-bold uppercase">{stage.title}</div>
-                    <div className="text-xs text-[var(--color-neo-text-secondary)] mt-1">{stage.description}</div>
+                  <div className="flex items-start gap-2">
+                    <div>
+                      <div className="font-display font-bold uppercase">{stage.title}</div>
+                      <div className="text-xs text-[var(--color-neo-text-secondary)] mt-1">{stage.description}</div>
+                    </div>
+                    <button
+                      className="neo-btn neo-btn-ghost p-1"
+                      onClick={() => openHelp(stage.id)}
+                      title={`About ${stage.title}`}
+                      aria-label={`About ${stage.title}`}
+                    >
+                      <Info size={16} />
+                    </button>
                   </div>
                   <label className="neo-card p-2 flex items-center gap-2 cursor-pointer">
                     <span className="text-xs font-display font-bold">Enabled</span>
