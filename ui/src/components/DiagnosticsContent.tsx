@@ -23,6 +23,17 @@ import { UI_BUILD_ID } from '../lib/buildInfo'
 import { InlineNotice, type InlineNoticeType } from './InlineNotice'
 import { HelpModal } from './HelpModal'
 
+type HelpTopic =
+  | 'all'
+  | 'overview'
+  | 'system'
+  | 'build'
+  | 'fixtures'
+  | 'qa'
+  | 'parallel'
+  | 'runs'
+  | 'cleanup'
+
 export function DiagnosticsContent() {
   const advanced = useAdvancedSettings()
   const updateAdvanced = useUpdateAdvancedSettings()
@@ -49,7 +60,7 @@ export function DiagnosticsContent() {
   const [notice, setNotice] = useState<{ type: InlineNoticeType; message: string } | null>(null)
   const noticeTimer = useRef<number | null>(null)
   const [showHelp, setShowHelp] = useState(false)
-  const [helpAnchor, setHelpAnchor] = useState<string>('diag-help-overview')
+  const [helpTopic, setHelpTopic] = useState<HelpTopic>('all')
 
   const tail = useDiagnosticsRunTail(selectedRunName, tailMaxChars)
   const cleanup = useCleanupQueue(selectedProject)
@@ -96,28 +107,53 @@ export function DiagnosticsContent() {
     }
   }
 
-  const openHelp = (anchor: string) => {
-    setHelpAnchor(anchor)
+  const openHelp = (topic: HelpTopic) => {
+    setHelpTopic(topic)
     setShowHelp(true)
   }
 
-  useEffect(() => {
-    if (!showHelp) return
-    const anchor = (helpAnchor || '').trim()
-    if (!anchor) return
-
-    const t = window.setTimeout(() => {
-      const el = document.getElementById(anchor)
-      if (!el) return
-      try {
-        el.scrollIntoView({ behavior: 'smooth', block: 'start' })
-      } catch {
-        el.scrollIntoView()
-      }
-    }, 60)
-
-    return () => window.clearTimeout(t)
-  }, [showHelp, helpAnchor])
+  const helpContent: Record<Exclude<HelpTopic, 'all'>, { title: string; body: string }> = {
+    overview: {
+      title: 'Why Diagnostics exists',
+      body:
+        'It’s a deterministic “does the machine work?” suite. These fixtures run in isolated directories and validate the Gatekeeper + QA pipelines without touching your real projects.',
+    },
+    system: {
+      title: 'System Status',
+      body:
+        'Checks that the API is reachable and confirms which tools are detected on your PATH (Claude/Codex/Gemini, node/npm). Missing tools will disable related engines elsewhere.',
+    },
+    build: {
+      title: 'Build Info',
+      body:
+        'Shows the UI build id and backend git SHA. If the UI looks weird after an update, hit Refresh. “Copy debug info” puts a small JSON bundle on your clipboard for bug reports.',
+    },
+    fixtures: {
+      title: 'Fixtures Directory',
+      body:
+        'Where fixture projects are created. Changing this does not move your real projects — it only affects where Diagnostics writes its temporary repos/logs.',
+    },
+    qa: {
+      title: 'QA Engine E2E',
+      body:
+        'Creates a tiny repo with an intentional verification failure, then proves the QA chain can fix it and resubmit until Gatekeeper merges. Engine order is the order tried (Claude first by default).',
+    },
+    parallel: {
+      title: 'Parallel Mini E2E',
+      body:
+        'Creates a small Python repo with a 3-feature dependency chain and runs parallel orchestration end-to-end: worktrees → verification → merge → DONE. This validates coordination, not model quality.',
+    },
+    runs: {
+      title: 'Run Logs',
+      body:
+        'Shows recent Diagnostics runs and lets you tail logs. If something fails, copy the tail + debug info and you’ll have enough context to reproduce.',
+    },
+    cleanup: {
+      title: 'Worktree Cleanup',
+      body:
+        'Windows sometimes locks files (especially node_modules). When cleanup/delete can’t remove a directory, we queue it here. “Run” retries deletion; “Clear” drops entries (use only if you’re sure).',
+    },
+  }
 
   // Keep the draft in sync with server settings (first load).
   useEffect(() => {
@@ -218,7 +254,7 @@ export function DiagnosticsContent() {
           <div className="flex items-center gap-2">
             <button
               className="neo-btn neo-btn-secondary text-sm"
-              onClick={() => openHelp('diag-help-overview')}
+              onClick={() => openHelp('all')}
               title="Explain Diagnostics"
             >
               <Info size={18} />
@@ -237,77 +273,45 @@ export function DiagnosticsContent() {
       )}
 
       <HelpModal isOpen={showHelp} title="Diagnostics: what this does" onClose={() => setShowHelp(false)}>
-        <div className="space-y-5 text-sm">
-          <div id="diag-help-overview">
-            <div className="font-display font-bold uppercase mb-1">Why Diagnostics exists</div>
-            <div className="text-[var(--color-neo-text-secondary)]">
-              It’s a deterministic “does the machine work?” suite. These fixtures run in isolated directories and are
-              designed to validate the Gatekeeper + QA pipelines without depending on your real projects.
+        <div className="space-y-4 text-sm">
+          {helpTopic !== 'all' && (
+            <div className="flex items-center justify-between gap-3">
+              <div className="text-xs font-mono text-[var(--color-neo-text-secondary)]">
+                Tip: click other ⓘ icons for section-specific help.
+              </div>
+              <button className="neo-btn neo-btn-secondary text-sm" onClick={() => setHelpTopic('all')}>
+                Show all
+              </button>
             </div>
-          </div>
+          )}
 
-          <div id="diag-help-system">
-            <div className="font-display font-bold uppercase mb-1">System Status</div>
-            <div className="text-[var(--color-neo-text-secondary)]">
-              Verifies the API is reachable and checks whether tools are detected on your PATH (Claude/Codex/Gemini,
-              node/npm). If a tool is missing, related engines will be disabled elsewhere.
+          {helpTopic === 'all' ? (
+            <div className="space-y-5">
+              {(Object.keys(helpContent) as Array<Exclude<HelpTopic, 'all'>>).map((key) => (
+                <div key={key} className="neo-card p-3 bg-[var(--color-neo-bg)]">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="font-display font-bold uppercase">{helpContent[key].title}</div>
+                    <button className="neo-btn neo-btn-secondary text-sm" onClick={() => setHelpTopic(key)}>
+                      Details
+                    </button>
+                  </div>
+                  <div className="text-[var(--color-neo-text-secondary)] mt-1">{helpContent[key].body}</div>
+                </div>
+              ))}
             </div>
-          </div>
-
-          <div id="diag-help-build">
-            <div className="font-display font-bold uppercase mb-1">Build Info</div>
-            <div className="text-[var(--color-neo-text-secondary)]">
-              Shows a UI build id and backend git SHA. If the UI looks “weird” after updating, hit Refresh. “Copy debug
-              info” puts a small JSON bundle on your clipboard for bug reports.
+          ) : (
+            <div className="neo-card p-4 bg-[var(--color-neo-bg)]">
+              <div className="font-display font-bold uppercase">{helpContent[helpTopic].title}</div>
+              <div className="text-[var(--color-neo-text-secondary)] mt-2">{helpContent[helpTopic].body}</div>
             </div>
-          </div>
-
-          <div id="diag-help-fixtures">
-            <div className="font-display font-bold uppercase mb-1">Fixtures Directory</div>
-            <div className="text-[var(--color-neo-text-secondary)]">
-              Where fixture projects are created. Changing this doesn’t move your real projects — it only affects where
-              Diagnostics writes its temporary repos/logs.
-            </div>
-          </div>
-
-          <div id="diag-help-qa">
-            <div className="font-display font-bold uppercase mb-1">QA Engine E2E</div>
-            <div className="text-[var(--color-neo-text-secondary)]">
-              Creates a tiny repo with an intentional verification failure, then proves the QA chain can fix it and
-              resubmit until Gatekeeper merges. The “Engines” order is the order tried (Claude first by default).
-            </div>
-          </div>
-
-          <div id="diag-help-parallel">
-            <div className="font-display font-bold uppercase mb-1">Parallel Mini E2E</div>
-            <div className="text-[var(--color-neo-text-secondary)]">
-              Creates a small Python repo with a 3-feature dependency chain and runs parallel orchestration end-to-end:
-              worktrees → verification → merge → DONE. This is the “does parallel mode still behave?” smoke test.
-            </div>
-          </div>
-
-          <div id="diag-help-runs">
-            <div className="font-display font-bold uppercase mb-1">Runs + Logs</div>
-            <div className="text-[var(--color-neo-text-secondary)]">
-              Shows recent Diagnostics runs and lets you tail logs. If something fails, copy the tail + debug info and
-              you’ll have enough context to reproduce.
-            </div>
-          </div>
-
-          <div id="diag-help-cleanup">
-            <div className="font-display font-bold uppercase mb-1">Worktree Cleanup</div>
-            <div className="text-[var(--color-neo-text-secondary)]">
-              Windows sometimes locks files (especially node_modules). When cleanup/delete can’t remove a directory, we
-              queue it here. “Process queue” retries deletion; “Clear queue” drops entries (use only if you’re sure).
-            </div>
-          </div>
+          )}
         </div>
       </HelpModal>
 
       <div className="neo-card p-4">
         <div className="flex items-center justify-between gap-3 mb-3">
           <div className="font-display font-bold uppercase">System Status</div>
-          <button className="neo-btn neo-btn-ghost p-2" onClick={() => openHelp('diag-help-system')} title="About System Status" aria-label="About System Status">
+          <button className="neo-btn neo-btn-ghost p-2" onClick={() => openHelp('system')} title="About System Status" aria-label="About System Status">
             <Info size={18} />
           </button>
         </div>
@@ -357,7 +361,7 @@ export function DiagnosticsContent() {
         <div className="neo-card p-3 mt-3">
           <div className="flex items-center justify-between gap-2 mb-2">
             <div className="text-xs font-mono text-[var(--color-neo-text-secondary)]">Build Info</div>
-            <button className="neo-btn neo-btn-ghost p-1" onClick={() => openHelp('diag-help-build')} title="About Build Info" aria-label="About Build Info">
+            <button className="neo-btn neo-btn-ghost p-1" onClick={() => openHelp('build')} title="About Build Info" aria-label="About Build Info">
               <Info size={16} />
             </button>
           </div>
@@ -421,7 +425,7 @@ export function DiagnosticsContent() {
       <div className="neo-card p-4">
         <div className="flex items-center justify-between gap-3 mb-3">
           <div className="font-display font-bold uppercase">Fixtures Directory</div>
-          <button className="neo-btn neo-btn-ghost p-2" onClick={() => openHelp('diag-help-fixtures')} title="About Fixtures Directory" aria-label="About Fixtures Directory">
+          <button className="neo-btn neo-btn-ghost p-2" onClick={() => openHelp('fixtures')} title="About Fixtures Directory" aria-label="About Fixtures Directory">
             <Info size={18} />
           </button>
         </div>
@@ -458,7 +462,7 @@ export function DiagnosticsContent() {
         <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
           <div className="flex items-center gap-2">
             <div className="font-display font-bold uppercase">Worktree Cleanup</div>
-            <button className="neo-btn neo-btn-ghost p-2" onClick={() => openHelp('diag-help-cleanup')} title="About Worktree Cleanup" aria-label="About Worktree Cleanup">
+            <button className="neo-btn neo-btn-ghost p-2" onClick={() => openHelp('cleanup')} title="About Worktree Cleanup" aria-label="About Worktree Cleanup">
               <Info size={18} />
             </button>
           </div>
@@ -549,7 +553,7 @@ export function DiagnosticsContent() {
       <div className="neo-card p-4">
         <div className="flex items-center justify-between gap-3 mb-3">
           <div className="font-display font-bold uppercase">QA Engine E2E</div>
-          <button className="neo-btn neo-btn-ghost p-2" onClick={() => openHelp('diag-help-qa')} title="About QA Engine E2E" aria-label="About QA Engine E2E">
+          <button className="neo-btn neo-btn-ghost p-2" onClick={() => openHelp('qa')} title="About QA Engine E2E" aria-label="About QA Engine E2E">
             <Info size={18} />
           </button>
         </div>
@@ -634,7 +638,7 @@ export function DiagnosticsContent() {
       <div className="neo-card p-4">
         <div className="flex items-center justify-between gap-3 mb-3">
           <div className="font-display font-bold uppercase">Parallel Mini E2E</div>
-          <button className="neo-btn neo-btn-ghost p-2" onClick={() => openHelp('diag-help-parallel')} title="About Parallel Mini E2E" aria-label="About Parallel Mini E2E">
+          <button className="neo-btn neo-btn-ghost p-2" onClick={() => openHelp('parallel')} title="About Parallel Mini E2E" aria-label="About Parallel Mini E2E">
             <Info size={18} />
           </button>
         </div>
@@ -717,7 +721,7 @@ export function DiagnosticsContent() {
         <div className="flex items-center justify-between gap-3 mb-3">
           <div className="flex items-center gap-2">
             <div className="font-display font-bold uppercase">Run Logs</div>
-            <button className="neo-btn neo-btn-ghost p-2" onClick={() => openHelp('diag-help-runs')} title="About Run Logs" aria-label="About Run Logs">
+            <button className="neo-btn neo-btn-ghost p-2" onClick={() => openHelp('runs')} title="About Run Logs" aria-label="About Run Logs">
               <Info size={18} />
             </button>
           </div>
