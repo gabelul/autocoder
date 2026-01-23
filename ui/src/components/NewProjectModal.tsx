@@ -15,6 +15,7 @@ import { useCreateProject, useProjects } from '../hooks/useProjects'
 import { SpecCreationChat } from './SpecCreationChat'
 import { FolderBrowser } from './FolderBrowser'
 import { getAutocoderYaml, startAgent, updateAutocoderYaml } from '../lib/api'
+import { InlineNotice, type InlineNoticeType } from './InlineNotice'
 
 type InitializerStatus = 'idle' | 'starting' | 'error'
 
@@ -40,6 +41,7 @@ export function NewProjectModal({
   const [_specMethod, setSpecMethod] = useState<SpecMethod | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
+  const [resultNotice, setResultNotice] = useState<{ type: InlineNoticeType; message: string } | null>(null)
   const [initializerStatus, setInitializerStatus] = useState<InitializerStatus>('idle')
   const [initializerError, setInitializerError] = useState<string | null>(null)
   const [yoloModeSelected, setYoloModeSelected] = useState(false)
@@ -158,6 +160,10 @@ export function NewProjectModal({
           specMethod: 'manual',
         })
         await maybeInitProjectConfig(project.name)
+        setResultNotice({
+          type: 'success',
+          message: `Project created as "${project.name}".`,
+        })
         setStepAndNotify('complete')
         setTimeout(() => {
           onProjectCreated(project.name)
@@ -175,6 +181,10 @@ export function NewProjectModal({
           specMethod: 'claude',
         })
         await maybeInitProjectConfig(project.name)
+        setResultNotice({
+          type: 'success',
+          message: `Project created as "${project.name}".`,
+        })
         setStepAndNotify('chat')
       } catch (err: unknown) {
         setError(err instanceof Error ? err.message : 'Failed to create project')
@@ -226,6 +236,7 @@ export function NewProjectModal({
     setSpecMethod(null)
     setError(null)
     setNotice(null)
+    setResultNotice(null)
     setInitializerStatus('idle')
     setInitializerError(null)
     setYoloModeSelected(false)
@@ -496,6 +507,12 @@ export function NewProjectModal({
                   <ArrowRight size={16} />
                 </button>
               </div>
+            </div>
+          )}
+
+          {step === 'complete' && resultNotice && (
+            <div className="mb-4">
+              <InlineNotice type={resultNotice.type} message={resultNotice.message} onClose={() => setResultNotice(null)} />
             </div>
           )}
 
