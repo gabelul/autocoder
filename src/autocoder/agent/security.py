@@ -8,6 +8,12 @@ Uses an allowlist approach - only explicitly permitted commands can run.
 
 import os
 import shlex
+import logging
+from pathlib import Path
+
+from autocoder.core.project_config import load_project_config, SecuritySpec
+
+logger = logging.getLogger(__name__)
 
 
 # Allowed commands for development tasks
@@ -66,6 +72,41 @@ ALLOWED_COMMANDS = {
 
 # Commands that need additional validation even when in the allowlist
 COMMANDS_NEEDING_EXTRA_VALIDATION = {"pkill", "chmod", "init.sh"}
+
+_SECURITY_CACHE: dict[str, tuple[float | None, SecuritySpec]] = {}
+
+
+def _get_project_security(project_dir: Path) -> SecuritySpec:
+    cfg_path = (project_dir / "autocoder.yaml").resolve()
+    mtime: float | None = None
+    if cfg_path.exists():
+        try:
+            mtime = cfg_path.stat().st_mtime
+        except Exception:
+            mtime = None
+
+    key = str(cfg_path)
+    cached = _SECURITY_CACHE.get(key)
+    if cached and cached[0] == mtime:
+        return cached[1]
+
+    try:
+        cfg = load_project_config(project_dir)
+        spec = cfg.security
+    except Exception:
+        spec = SecuritySpec()
+
+    _SECURITY_CACHE[key] = (mtime, spec)
+    return spec
+
+
+def _effective_allowlist(project_dir: Path) -> set[str]:
+    allowlist = set(ALLOWED_COMMANDS)
+    security = _get_project_security(project_dir)
+    if security.strict:
+        return allowlist
+    allowlist.update(security.allow_commands)
+    return allowlist
 
 
 def split_command_segments(command_string: str) -> list[str]:
@@ -352,9 +393,11 @@ async def bash_security_hook(input_data, tool_use_id=None, context=None):
     # Split into segments for per-command validation
     segments = split_command_segments(command)
 
+    allowlist = _effective_allowlist(Path.cwd())
+
     # Check each command against the allowlist
     for cmd in commands:
-        if cmd not in ALLOWED_COMMANDS:
+        if cmd not in allowlist:
             return {
                 "decision": "block",
                 "reason": f"Command '{cmd}' is not in the allowed commands list",

@@ -24,6 +24,10 @@ from typing import Any, Mapping
 
 import json
 import yaml
+import logging
+import re
+
+logger = logging.getLogger(__name__)
 
 
 def _as_int(value: object) -> int | None:
@@ -74,10 +78,17 @@ class ReviewSpec:
 
 
 @dataclass(frozen=True)
+class SecuritySpec:
+    strict: bool = False
+    allow_commands: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
 class ResolvedProjectConfig:
     preset: str | None
     commands: dict[str, CommandSpec | None]
     review: ReviewSpec = field(default_factory=ReviewSpec)
+    security: SecuritySpec = field(default_factory=SecuritySpec)
 
     def get_command(self, name: str) -> CommandSpec | None:
         return self.commands.get(name)
@@ -328,7 +339,56 @@ def load_project_config(project_dir: Path) -> ResolvedProjectConfig:
             gemini_model=gemini_model,
         )
 
-    return ResolvedProjectConfig(preset=preset, commands=commands, review=review)
+    security_in = merged.get("security", {})
+    security = _parse_security_spec(security_in)
+
+    return ResolvedProjectConfig(preset=preset, commands=commands, review=review, security=security)
+
+
+def _normalize_command_token(token: str) -> str | None:
+    raw = token.strip()
+    if not raw:
+        return None
+    if any(ch.isspace() for ch in raw):
+        return None
+    if "/" in raw or "\\" in raw:
+        return None
+    if not re.match(r"^[A-Za-z0-9._+-]{1,64}$", raw):
+        return None
+    return raw.lower()
+
+
+def _parse_security_spec(obj: object) -> SecuritySpec:
+    if not isinstance(obj, dict):
+        return SecuritySpec()
+
+    strict = bool(obj.get("strict", False))
+
+    allow_raw = obj.get("allow_commands")
+    allow_list: list[str] = []
+    if isinstance(allow_raw, str):
+        allow_list = [p.strip() for p in allow_raw.replace(";", ",").split(",") if p.strip()]
+    elif isinstance(allow_raw, list):
+        allow_list = [str(p).strip() for p in allow_raw if str(p).strip()]
+
+    normalized: list[str] = []
+    for token in allow_list[:100]:
+        cleaned = _normalize_command_token(token)
+        if cleaned:
+            normalized.append(cleaned)
+        else:
+            logger.warning("Ignored invalid security.allow_commands token: %r", token)
+
+    # Deduplicate while preserving order.
+    seen: set[str] = set()
+    deduped: list[str] = []
+    for token in normalized:
+        if token in seen:
+            continue
+        seen.add(token)
+        deduped.append(token)
+
+    return SecuritySpec(strict=strict, allow_commands=deduped)
 
 
 def infer_preset(project_dir: Path) -> str | None:

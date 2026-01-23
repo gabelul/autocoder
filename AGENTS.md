@@ -79,3 +79,4 @@ AutoCoder is a Claude Agent SDK + MCP based coding agent. It supports single-age
 - Don’t commit runtime artifacts: `agent_system.db`, `.autocoder/`, `worktrees/`.
 - Gatekeeper is deterministic and the only component allowed to merge to main.
 - Shell tool usage is restricted by an allowlist in `src/autocoder/agent/security.py`; treat changes there as security-sensitive.
+- Projects can extend the allowlist via `autocoder.yaml` under `security.allow_commands` (adds only). Use `security.strict: true` to ignore project overrides.

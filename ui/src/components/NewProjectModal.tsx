@@ -120,6 +120,12 @@ export function NewProjectModal({
       '#   mode: gate',
       '#   consensus: majority',
       '#   engines: [claude_review, codex_cli, gemini_cli]',
+      '#',
+      '# security:',
+      '#   strict: false  # true = ignore project overrides',
+      '#   allow_commands:',
+      '#     - "pnpm"',
+      '#     - "poetry"',
       '',
     ].join('\n')
 

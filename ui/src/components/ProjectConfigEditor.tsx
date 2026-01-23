@@ -38,9 +38,16 @@ const TEMPLATE = `# autocoder.yaml
 #   mode: advisory       # off|advisory|gate
 #   engines: [claude_review, codex_cli, gemini_cli]
 #   consensus: majority  # majority|all|any
+#
+# Optional project command allowlist (adds to global allowlist):
+# security:
+#   strict: false  # true = ignore project overrides
+#   allow_commands:
+#     - "poetry"
+#     - "pnpm"
 `
 
-type HelpTopic = 'all' | 'overview' | 'import' | 'template' | 'commands' | 'placeholders' | 'review'
+type HelpTopic = 'all' | 'overview' | 'import' | 'template' | 'commands' | 'placeholders' | 'review' | 'security'
 
 export function ProjectConfigEditor({ projectName }: { projectName: string }) {
   const q = useAutocoderYaml(projectName)
@@ -117,6 +124,11 @@ export function ProjectConfigEditor({ projectName }: { projectName: string }) {
       title: 'Review block (optional)',
       body:
         'The optional `review:` block configures pre-merge review (advisory or gate) using the Review engine chain. Use it for “second set of eyes” before merge; it’s not a replacement for tests.',
+    },
+    security: {
+      title: 'Security allowlist (optional)',
+      body:
+        'Use `security.allow_commands` to add safe, project-specific CLI commands (e.g. pnpm, poetry). This only extends the global allowlist. Set `security.strict: true` to ignore project overrides entirely.',
     },
   }
 
