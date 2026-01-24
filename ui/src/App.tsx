@@ -735,7 +735,9 @@ function App() {
       {/* Main Content */}
       <main
         className="max-w-screen-2xl mx-auto px-4 py-8"
-        style={{ paddingBottom: debugOpen ? debugPanelHeight + 32 : undefined }}
+        style={{
+          paddingBottom: selectedProject ? (debugOpen ? debugPanelHeight : 40) + 32 : undefined,
+        }}
       >
         {route === 'settings' ? (
           <div className="max-w-6xl mx-auto">
