@@ -3,7 +3,7 @@
  */
 
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Trash2 } from 'lucide-react'
+import { ExternalLink, Trash2 } from 'lucide-react'
 import { useActivityEvents, useClearActivityEvents } from '../hooks/useActivityEvents'
 import type { ActivityEvent } from '../lib/types'
 
@@ -44,7 +44,17 @@ function _eventGroup(ev: ActivityEvent): Exclude<ActivityFilter, 'all' | 'errors
   return 'agents'
 }
 
-export function ActivityFeedPanel({ projectName, isActive }: { projectName: string; isActive?: boolean }) {
+export function ActivityFeedPanel({
+  projectName,
+  isActive,
+  onOpenFull,
+  dense,
+}: {
+  projectName: string
+  isActive?: boolean
+  onOpenFull?: () => void
+  dense?: boolean
+}) {
   const scrollRef = useRef<HTMLDivElement>(null)
   const [autoScroll, setAutoScroll] = useState(true)
   const [filter, setFilter] = useState<ActivityFilter>('all')
@@ -82,11 +92,11 @@ export function ActivityFeedPanel({ projectName, isActive }: { projectName: stri
 
   return (
     <div className="h-full flex flex-col">
-      <div className="flex items-center justify-between px-2 pb-2">
+      <div className="flex items-center justify-between gap-2 px-2 pb-2">
         <div className="flex items-center gap-2">
-          <span className="text-xs font-mono text-gray-300">Mission Control</span>
+          <span className="text-xs font-mono text-[var(--color-neo-text-secondary)]">Mission Control</span>
           <select
-            className="text-xs font-mono bg-[#222] border border-[#333] text-gray-200 rounded px-2 py-1"
+            className="neo-input !w-auto !py-1 !px-2 !text-xs !font-mono"
             value={filter}
             onChange={(e) => setFilter(e.target.value as ActivityFilter)}
             aria-label="Filter activity"
@@ -99,46 +109,67 @@ export function ActivityFeedPanel({ projectName, isActive }: { projectName: stri
             <option value="errors">Errors</option>
           </select>
           {!autoScroll && (
-            <span className="px-2 py-0.5 text-xs font-mono bg-yellow-600 text-white rounded">
+            <span className="neo-badge bg-yellow-600 text-white">
               Paused
             </span>
           )}
         </div>
 
-        <button
-          onClick={() => clearMutation.mutate()}
-          disabled={clearMutation.isPending}
-          className="p-1.5 hover:bg-[#333] rounded transition-colors disabled:opacity-50"
-          title="Clear activity events"
-        >
-          <Trash2 size={14} className="text-gray-400" />
-        </button>
+        <div className="flex items-center gap-1">
+          {onOpenFull ? (
+            <button
+              onClick={onOpenFull}
+              className="neo-btn neo-btn-sm bg-[var(--color-neo-bg)]"
+              title="Open full Mission Control"
+            >
+              Open
+              <ExternalLink size={14} />
+            </button>
+          ) : null}
+          <button
+            onClick={() => clearMutation.mutate()}
+            disabled={clearMutation.isPending}
+            className="neo-btn neo-btn-sm bg-[var(--color-neo-bg)]"
+            title="Clear activity events"
+          >
+            <Trash2 size={14} />
+          </button>
+        </div>
       </div>
 
       <div
         ref={scrollRef}
         onScroll={handleScroll}
-        className="flex-1 overflow-y-auto px-2 pb-2 font-mono text-sm"
+        className={`flex-1 overflow-y-auto px-2 pb-2 font-mono ${dense ? 'text-xs' : 'text-sm'}`}
       >
         {isLoading ? (
-          <div className="flex items-center justify-center h-full text-gray-500">Loading activity…</div>
+          <div className="flex items-center justify-center h-full text-[var(--color-neo-text-secondary)]">
+            Loading activity…
+          </div>
         ) : error ? (
-          <div className="flex items-center justify-center h-full text-red-400">
+          <div className="flex items-center justify-center h-full text-[var(--color-neo-danger)]">
             {error instanceof Error ? error.message : 'Failed to load activity'}
           </div>
         ) : events.length === 0 ? (
-          <div className="flex items-center justify-center h-full text-gray-500">
+          <div className="flex items-center justify-center h-full text-[var(--color-neo-text-secondary)]">
             No activity yet.
           </div>
         ) : (
           <div className="space-y-0.5">
             {events.map((ev) => (
-              <div key={ev.id} className="flex gap-2 hover:bg-[#2a2a2a] px-1 py-0.5 rounded">
-                <span className="text-gray-500 select-none shrink-0">{_formatTime(ev.created_at)}</span>
+              <div
+                key={ev.id}
+                className="flex gap-2 hover:bg-black/10 px-1 py-0.5 rounded"
+              >
+                <span className="text-[var(--color-neo-text-muted)] select-none shrink-0">
+                  {_formatTime(ev.created_at)}
+                </span>
                 <span className={`${_levelColor(ev.level)} shrink-0`}>{String(ev.level || 'INFO').toUpperCase()}</span>
-                <span className="text-gray-300 whitespace-pre-wrap break-words flex-1">{ev.message}</span>
+                <span className="text-[var(--color-neo-text)] whitespace-pre-wrap break-words flex-1">
+                  {ev.message}
+                </span>
                 {ev.feature_id ? (
-                  <span className="text-xs text-gray-500 shrink-0">#{ev.feature_id}</span>
+                  <span className="text-xs text-[var(--color-neo-text-muted)] shrink-0">#{ev.feature_id}</span>
                 ) : null}
               </div>
             ))}
