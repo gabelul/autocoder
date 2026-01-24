@@ -16,6 +16,8 @@ from datetime import datetime, timedelta
 from ..schemas import AgentStatus, AgentActionResponse, AgentStartRequest, AgentScheduleRequest, AgentScheduleResponse
 from ..services.process_manager import get_manager
 from ..services.scheduler import schedule_run, get_schedule, cancel_schedule
+from autocoder.core.spec_validation import project_setup_status
+from autocoder.core.git_bootstrap import ensure_git_repo_for_parallel
 
 
 def _get_project_path(project_name: str) -> Path:
@@ -54,7 +56,6 @@ def get_project_manager(project_name: str):
 
     return get_manager(project_name, project_dir, ROOT_DIR)
 
-
 @router.get("/status", response_model=AgentStatus)
 async def get_agent_status(project_name: str):
     """Get the current status of the agent for a project."""
@@ -81,6 +82,27 @@ async def start_agent(
 ):
     """Start the agent for a project."""
     manager = get_project_manager(project_name)
+    status = project_setup_status(manager.project_dir)
+    if status.required:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Project setup required: {status.reason} Create a real prompts/app_spec.txt first.",
+        )
+    if request.parallel_mode:
+        ok, msg = ensure_git_repo_for_parallel(manager.project_dir)
+        if not ok:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "Parallel mode requires a git repo with an initial commit (used for worktrees).\n"
+                    f"Auto-fix failed: {msg}\n"
+                    "Fix manually:\n"
+                    "  git init\n"
+                    "  git add -A\n"
+                    "  git commit -m \"init\"\n"
+                    "Or switch to Standard mode."
+                ),
+            )
 
     # Parallel and YOLO modes are mutually exclusive
     if request.parallel_mode and request.yolo_mode:
@@ -171,6 +193,27 @@ async def schedule_agent(
 ):
     """Schedule a future agent run."""
     manager = get_project_manager(project_name)
+    status = project_setup_status(manager.project_dir)
+    if status.required:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Project setup required: {status.reason} Create a real prompts/app_spec.txt first.",
+        )
+    if request.parallel_mode:
+        ok, msg = ensure_git_repo_for_parallel(manager.project_dir)
+        if not ok:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "Parallel mode requires a git repo with an initial commit (used for worktrees).\n"
+                    f"Auto-fix failed: {msg}\n"
+                    "Fix manually:\n"
+                    "  git init\n"
+                    "  git add -A\n"
+                    "  git commit -m \"init\"\n"
+                    "Or schedule Standard mode."
+                ),
+            )
     run_at = request.run_at
     if run_at.tzinfo is not None:
         run_at = run_at.astimezone().replace(tzinfo=None)

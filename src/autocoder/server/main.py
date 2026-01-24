@@ -40,6 +40,7 @@ from .routers import (
     parallel_router,
     settings_router,
     engine_settings_router,
+    project_settings_router,
     generate_router,
     project_config_router,
     diagnostics_router,
@@ -157,6 +158,7 @@ app.include_router(activity_router)
 app.include_router(parallel_router)
 app.include_router(settings_router)
 app.include_router(engine_settings_router)
+app.include_router(project_settings_router)
 app.include_router(generate_router)
 app.include_router(project_config_router)
 app.include_router(diagnostics_router)

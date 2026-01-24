@@ -4,7 +4,7 @@
 
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import * as api from '../lib/api'
-import type { FeatureCreate, AgentStartRequest, AgentScheduleRequest } from '../lib/types'
+import type { FeatureCreate, AgentStartRequest, AgentScheduleRequest, ProjectRunDefaults, ProjectRuntimeSettings } from '../lib/types'
 
 // ============================================================================
 // Projects
@@ -22,6 +22,46 @@ export function useProject(name: string | null) {
     queryKey: ['project', name],
     queryFn: () => api.getProject(name!),
     enabled: !!name,
+  })
+}
+
+export function useProjectRunDefaults(name: string | null) {
+  return useQuery({
+    queryKey: ['project-run-defaults', name],
+    queryFn: () => api.getProjectRunDefaults(name!),
+    enabled: !!name,
+    staleTime: 30_000,
+  })
+}
+
+export function useUpdateProjectRunDefaults(name: string) {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: (defaults: ProjectRunDefaults) => api.updateProjectRunDefaults(name, defaults),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['project-run-defaults', name] })
+    },
+  })
+}
+
+export function useProjectRuntimeSettings(name: string | null) {
+  return useQuery({
+    queryKey: ['project-runtime-settings', name],
+    queryFn: () => api.getProjectRuntimeSettings(name!),
+    enabled: !!name,
+    staleTime: 30_000,
+  })
+}
+
+export function useUpdateProjectRuntimeSettings(name: string) {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: (settings: ProjectRuntimeSettings) => api.updateProjectRuntimeSettings(name, settings),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['project-runtime-settings', name] })
+    },
   })
 }
 

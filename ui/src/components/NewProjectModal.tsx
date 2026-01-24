@@ -14,13 +14,25 @@ import { X, Bot, FileEdit, ArrowRight, ArrowLeft, Loader2, CheckCircle2, Folder,
 import { useCreateProject, useProjects } from '../hooks/useProjects'
 import { SpecCreationChat } from './SpecCreationChat'
 import { FolderBrowser } from './FolderBrowser'
-import { getAutocoderYaml, startAgent, updateAutocoderYaml } from '../lib/api'
+import {
+  getAutocoderYaml,
+  startAgent,
+  updateAutocoderYaml,
+  updateEngineSettings,
+  updateProjectRunDefaults,
+  updateProjectRuntimeSettings,
+} from '../lib/api'
 import { InlineNotice, type InlineNoticeType } from './InlineNotice'
+import type { EngineId, EngineSettings } from '../lib/types'
 
 type InitializerStatus = 'idle' | 'starting' | 'error'
 
 type Step = 'name' | 'folder' | 'setup' | 'method' | 'chat' | 'complete'
 type SpecMethod = 'claude' | 'manual'
+type SetupLevel = 'fast' | 'advanced'
+type RunMode = 'standard' | 'parallel'
+type ParallelPreset = 'quality' | 'balanced' | 'economy' | 'cheap' | 'experimental' | 'custom'
+type EnginePreset = 'claude_only' | 'hybrid'
 
 interface NewProjectModalProps {
   isOpen: boolean
@@ -36,6 +48,7 @@ export function NewProjectModal({
   onStepChange,
 }: NewProjectModalProps) {
   const [step, setStep] = useState<Step>('name')
+  const [setupLevel, setSetupLevel] = useState<SetupLevel>('fast')
   const [projectName, setProjectName] = useState('')
   const [projectPath, setProjectPath] = useState<string | null>(null)
   const [_specMethod, setSpecMethod] = useState<SpecMethod | null>(null)
@@ -48,6 +61,13 @@ export function NewProjectModal({
   const [initAutocoderYaml, setInitAutocoderYaml] = useState(true)
   const [configSource, setConfigSource] = useState<'template' | 'copy'>('template')
   const [copyFromProject, setCopyFromProject] = useState('')
+  const [runMode, setRunMode] = useState<RunMode>('standard')
+  const [parallelCount, setParallelCount] = useState(3)
+  const [parallelPreset, setParallelPreset] = useState<ParallelPreset>('balanced')
+  const [enginePreset, setEnginePreset] = useState<EnginePreset>('claude_only')
+  const [plannerRequired, setPlannerRequired] = useState(true)
+  const [stopWhenDone, setStopWhenDone] = useState(true)
+  const [requireGatekeeper, setRequireGatekeeper] = useState(true)
 
   // Suppress unused variable warning - specMethod may be used in future
   void _specMethod
@@ -129,6 +149,80 @@ export function NewProjectModal({
       '',
     ].join('\n')
 
+  const buildEngineSettingsPreset = (preset: EnginePreset): EngineSettings => {
+    const claudeOnly: EngineSettings = {
+      version: 2,
+      chains: {
+        implement: { enabled: true, max_iterations: 2, engines: ['claude_patch'] },
+        qa_fix: { enabled: true, max_iterations: 2, engines: ['claude_patch'] },
+        review: { enabled: true, max_iterations: 1, engines: ['claude_review'] },
+        spec_draft: { enabled: true, max_iterations: 1, engines: ['claude_spec'] },
+        spec_synthesize: { enabled: true, max_iterations: 1, engines: ['claude_spec'] },
+        initializer: { enabled: true, max_iterations: 1, engines: ['claude_spec'] },
+      },
+    }
+    if (preset === 'claude_only') return claudeOnly
+
+    const append = (engines: EngineId[], extra: EngineId[]) => {
+      const next: EngineId[] = []
+      for (const e of [...engines, ...extra]) {
+        if (!next.includes(e)) next.push(e)
+      }
+      return next
+    }
+
+    const extras: EngineId[] = ['codex_cli', 'gemini_cli']
+    return {
+      ...claudeOnly,
+      chains: {
+        ...claudeOnly.chains,
+        implement: { ...claudeOnly.chains.implement, engines: append(claudeOnly.chains.implement.engines, extras) },
+        qa_fix: { ...claudeOnly.chains.qa_fix, engines: append(claudeOnly.chains.qa_fix.engines, extras) },
+        review: { ...claudeOnly.chains.review, engines: append(claudeOnly.chains.review.engines, extras) },
+        spec_draft: { ...claudeOnly.chains.spec_draft, engines: append(claudeOnly.chains.spec_draft.engines, extras) },
+        initializer: { ...claudeOnly.chains.initializer, engines: append(claudeOnly.chains.initializer.engines, extras) },
+      },
+    }
+  }
+
+  const maybeApplyWizardSettings = async (name: string) => {
+    // Always apply per-project run defaults + runtime settings so the project starts "ready".
+    try {
+      await updateProjectRunDefaults(name, {
+        yolo_mode: false,
+        mode: runMode,
+        parallel_count: parallelCount,
+        model_preset: parallelPreset,
+      })
+    } catch (e: any) {
+      setError(e instanceof Error ? e.message : 'Failed to save project run defaults')
+    }
+
+    try {
+      await updateProjectRuntimeSettings(name, {
+        planner_enabled: plannerRequired,
+        planner_required: plannerRequired,
+        require_gatekeeper: requireGatekeeper,
+        allow_no_tests: false,
+        stop_when_done: stopWhenDone,
+        locks_enabled: true,
+        worker_verify: true,
+      })
+    } catch (e: any) {
+      setError(e instanceof Error ? e.message : 'Failed to save project runtime settings')
+    }
+
+    if (setupLevel !== 'advanced') return
+
+    // Per-project engine chains
+    try {
+      await updateEngineSettings(name, buildEngineSettingsPreset(enginePreset))
+    } catch (e: any) {
+      // Non-fatal: user can still change it later in Settings → Engines.
+      setError(e instanceof Error ? e.message : 'Failed to apply engine settings')
+    }
+  }
+
   const maybeInitProjectConfig = async (name: string) => {
     if (!initAutocoderYaml) return
 
@@ -166,6 +260,7 @@ export function NewProjectModal({
           specMethod: 'manual',
         })
         await maybeInitProjectConfig(project.name)
+        await maybeApplyWizardSettings(project.name)
         setResultNotice({
           type: 'success',
           message: `Project created as "${project.name}".`,
@@ -187,6 +282,7 @@ export function NewProjectModal({
           specMethod: 'claude',
         })
         await maybeInitProjectConfig(project.name)
+        await maybeApplyWizardSettings(project.name)
         setResultNotice({
           type: 'success',
           message: `Project created as "${project.name}".`,
@@ -204,11 +300,22 @@ export function NewProjectModal({
     // Auto-start the initializer agent
     setInitializerStatus('starting')
     try {
-      await startAgent(projectName.trim(), { yolo_mode: yoloMode })
+      const name = projectName.trim()
+      if (setupLevel === 'advanced' && runMode === 'parallel') {
+        // Parallel + YOLO are mutually exclusive; force YOLO off.
+        await startAgent(name, {
+          yolo_mode: false,
+          parallel_mode: true,
+          parallel_count: parallelCount,
+          model_preset: parallelPreset,
+        })
+      } else {
+        await startAgent(name, { yolo_mode: yoloMode })
+      }
       // Success - navigate to project
       setStepAndNotify('complete')
       setTimeout(() => {
-        onProjectCreated(projectName.trim())
+        onProjectCreated(name)
         handleClose()
       }, 1500)
     } catch (err) {
@@ -237,6 +344,7 @@ export function NewProjectModal({
 
   const handleClose = () => {
     setStepAndNotify('name')
+    setSetupLevel('fast')
     setProjectName('')
     setProjectPath(null)
     setSpecMethod(null)
@@ -249,6 +357,13 @@ export function NewProjectModal({
     setInitAutocoderYaml(true)
     setConfigSource('template')
     setCopyFromProject('')
+    setRunMode('standard')
+    setParallelCount(3)
+    setParallelPreset('balanced')
+    setEnginePreset('claude_only')
+    setPlannerRequired(true)
+    setStopWhenDone(true)
+    setRequireGatekeeper(true)
     onClose()
   }
 
@@ -404,8 +519,36 @@ export function NewProjectModal({
           {step === 'setup' && (
             <div>
               <p className="text-[var(--color-neo-text-secondary)] mb-6">
-                Optionally configure project defaults (you can edit later).
+                Configure project defaults (you can edit later).
               </p>
+
+              <div className="neo-card p-4 mb-6">
+                <div className="text-xs font-display font-bold uppercase mb-3">Setup Mode</div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setSetupLevel('fast')}
+                    className={`neo-card p-4 text-left ${setupLevel === 'fast' ? 'bg-[var(--color-neo-neutral-100)]' : ''}`}
+                    title="Fast defaults: simplest and most reliable"
+                  >
+                    <div className="font-display font-bold uppercase">Fast</div>
+                    <div className="text-sm text-[var(--color-neo-text-secondary)]">
+                      Claude-only engines, Standard mode. Minimal moving parts.
+                    </div>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSetupLevel('advanced')}
+                    className={`neo-card p-4 text-left ${setupLevel === 'advanced' ? 'bg-[var(--color-neo-neutral-100)]' : ''}`}
+                    title="Advanced: configure engines + run mode"
+                  >
+                    <div className="font-display font-bold uppercase">Advanced</div>
+                    <div className="text-sm text-[var(--color-neo-text-secondary)]">
+                      Configure parallel defaults, engine chains, and planner options.
+                    </div>
+                  </button>
+                </div>
+              </div>
 
               <div className="neo-card p-4 mb-6">
                 <div className="flex items-start gap-3">
@@ -497,6 +640,146 @@ export function NewProjectModal({
                   )}
                 </div>
               </div>
+
+              {setupLevel === 'advanced' && (
+                <>
+                  <div className="neo-card p-4 mb-6">
+                    <div className="font-display font-bold uppercase mb-2">Run Defaults</div>
+                    <div className="text-sm text-[var(--color-neo-text-secondary)] mb-3">
+                      Choose how the first run starts after spec creation. Parallel uses git worktrees; AutoCoder will initialize git automatically if needed.
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setRunMode('standard')}
+                        className={`neo-btn text-sm ${runMode === 'standard' ? 'bg-[var(--color-neo-accent)] text-white' : 'neo-btn-secondary'}`}
+                      >
+                        Standard
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setRunMode('parallel')}
+                        className={`neo-btn text-sm ${runMode === 'parallel' ? 'bg-[var(--color-neo-accent)] text-white' : 'neo-btn-secondary'}`}
+                      >
+                        Parallel
+                      </button>
+                    </div>
+
+                    {runMode === 'parallel' && (
+                      <div className="mt-4 grid grid-cols-1 gap-3">
+                        <label className="neo-card p-3">
+                          <div className="text-xs font-display font-bold uppercase mb-2">Parallel agents</div>
+                          <input
+                            type="number"
+                            min={1}
+                            max={5}
+                            value={parallelCount}
+                            onChange={(e) => setParallelCount(Math.max(1, Math.min(5, Number(e.target.value) || 1)))}
+                            className="neo-input"
+                          />
+                        </label>
+                        <label className="neo-card p-3">
+                          <div className="text-xs font-display font-bold uppercase mb-2">Preset</div>
+                          <select
+                            value={parallelPreset}
+                            onChange={(e) => setParallelPreset(e.target.value as ParallelPreset)}
+                            className="neo-btn text-sm py-2 px-3 bg-white border-3 border-[var(--color-neo-border)] font-display w-full"
+                          >
+                            <option value="quality">quality</option>
+                            <option value="balanced">balanced</option>
+                            <option value="economy">economy</option>
+                            <option value="cheap">cheap</option>
+                            <option value="experimental">experimental</option>
+                            <option value="custom">custom</option>
+                          </select>
+                        </label>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="neo-card p-4 mb-6">
+                    <div className="font-display font-bold uppercase mb-2">Engines</div>
+                    <div className="text-sm text-[var(--color-neo-text-secondary)] mb-3">
+                      Sets per-project engine chains (Settings → Engines).
+                    </div>
+                    <div className="grid grid-cols-1 gap-3">
+                      <label className="neo-card p-3 flex items-center justify-between cursor-pointer">
+                        <div>
+                          <div className="font-display font-bold text-sm">Claude only</div>
+                          <div className="text-xs text-[var(--color-neo-text-secondary)]">Most stable defaults.</div>
+                        </div>
+                        <input
+                          type="radio"
+                          name="enginePreset"
+                          checked={enginePreset === 'claude_only'}
+                          onChange={() => setEnginePreset('claude_only')}
+                          className="w-5 h-5"
+                        />
+                      </label>
+                      <label className="neo-card p-3 flex items-center justify-between cursor-pointer">
+                        <div>
+                          <div className="font-display font-bold text-sm">Hybrid (Claude + Codex + Gemini)</div>
+                          <div className="text-xs text-[var(--color-neo-text-secondary)]">
+                            Adds Codex/Gemini after Claude for more coverage (requires CLIs installed).
+                          </div>
+                        </div>
+                        <input
+                          type="radio"
+                          name="enginePreset"
+                          checked={enginePreset === 'hybrid'}
+                          onChange={() => setEnginePreset('hybrid')}
+                          className="w-5 h-5"
+                        />
+                      </label>
+                    </div>
+                  </div>
+
+                  <label className="neo-card p-4 mb-6 flex items-start justify-between gap-3 cursor-pointer">
+                    <div>
+                      <div className="font-display font-bold uppercase">Planner required (smart)</div>
+                      <div className="text-sm text-[var(--color-neo-text-secondary)]">
+                        Ensures risky features get a plan artifact first (per-project; fail-open).
+                      </div>
+                    </div>
+                    <input
+                      type="checkbox"
+                      checked={plannerRequired}
+                      onChange={(e) => setPlannerRequired(e.target.checked)}
+                      className="w-5 h-5 mt-1"
+                    />
+                  </label>
+
+                  <label className="neo-card p-4 mb-6 flex items-start justify-between gap-3 cursor-pointer">
+                    <div>
+                      <div className="font-display font-bold uppercase">Stop when done</div>
+                      <div className="text-sm text-[var(--color-neo-text-secondary)]">
+                        Stops the agent when the queue is empty (per-project).
+                      </div>
+                    </div>
+                    <input
+                      type="checkbox"
+                      checked={stopWhenDone}
+                      onChange={(e) => setStopWhenDone(e.target.checked)}
+                      className="w-5 h-5 mt-1"
+                    />
+                  </label>
+
+                  <label className="neo-card p-4 mb-6 flex items-start justify-between gap-3 cursor-pointer">
+                    <div>
+                      <div className="font-display font-bold uppercase">Require Gatekeeper</div>
+                      <div className="text-sm text-[var(--color-neo-text-secondary)]">
+                        Requires deterministic verification before merge (per-project).
+                      </div>
+                    </div>
+                    <input
+                      type="checkbox"
+                      checked={requireGatekeeper}
+                      onChange={(e) => setRequireGatekeeper(e.target.checked)}
+                      className="w-5 h-5 mt-1"
+                    />
+                  </label>
+                </>
+              )}
 
               <div className="flex justify-between mt-6">
                 <button onClick={handleBack} className="neo-btn neo-btn-ghost">

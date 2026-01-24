@@ -21,6 +21,7 @@ from typing import Literal, Callable, Awaitable, Set
 import psutil
 
 from ..settings_store import apply_advanced_settings_env
+from autocoder.core.project_runtime_settings import apply_project_runtime_settings_env
 
 
 logger = logging.getLogger(__name__)
@@ -453,6 +454,10 @@ class AgentProcessManager:
             # Apply persisted server-side advanced settings to the spawned process env.
             # Persisted settings override env, but only when explicitly saved.
             env = apply_advanced_settings_env(env)
+            # Apply project-scoped runtime overrides (wins over global advanced defaults).
+            env = apply_project_runtime_settings_env(
+                self.project_dir, env, override_existing=True
+            )
 
             # Start subprocess with piped stdout/stderr
             # Use project_dir as cwd so Claude SDK sandbox allows access to project files

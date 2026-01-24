@@ -1,6 +1,14 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
-import { useProjects, useProject, useFeatures, useAgentStatus, useSetupStatus } from './hooks/useProjects'
+import {
+  useProjects,
+  useProject,
+  useFeatures,
+  useAgentStatus,
+  useSetupStatus,
+  useProjectRunDefaults,
+  useUpdateProjectRunDefaults,
+} from './hooks/useProjects'
 import { useProjectWebSocket } from './hooks/useWebSocket'
 import { useFeatureSound } from './hooks/useFeatureSound'
 import { useCelebration } from './hooks/useCelebration'
@@ -21,6 +29,7 @@ import { AssistantFAB } from './components/AssistantFAB'
 import { AssistantPanel } from './components/AssistantPanel'
 import { AgentStatusGrid } from './components/AgentStatusGrid'
 import { RecentActivityCard } from './components/RecentActivityCard'
+import { InitializingFeaturesScreen } from './components/InitializingFeaturesScreen'
 import { NewProjectModal } from './components/NewProjectModal'
 import { SettingsModal, type RunSettings } from './components/SettingsModal'
 import { SettingsPage } from './pages/SettingsPage'
@@ -29,7 +38,7 @@ import { ProjectSetupRequired } from './components/ProjectSetupRequired'
 import { SpecCreationChat } from './components/SpecCreationChat'
 import { KnowledgeFilesModal } from './components/KnowledgeFilesModal'
 import { ConfirmationDialog } from './components/ConfirmationDialog'
-import { Plus, Loader2, FileText, Settings as SettingsIcon, Sparkles, BookOpen, ChevronDown, List, MessageCircle } from 'lucide-react'
+import { Plus, FileText, Settings as SettingsIcon, Sparkles, BookOpen, ChevronDown, List, MessageCircle } from 'lucide-react'
 import type { Feature } from './lib/types'
 import { startAgent } from './lib/api'
 
@@ -64,6 +73,7 @@ function App() {
   const [specInitializerStatus, setSpecInitializerStatus] = useState<'idle' | 'starting' | 'error'>('idle')
   const [specInitializerError, setSpecInitializerError] = useState<string | null>(null)
   const [specYoloSelected, setSpecYoloSelected] = useState(false)
+  const [runStartError, setRunStartError] = useState<string | null>(null)
   const [showKnowledgeModal, setShowKnowledgeModal] = useState(false)
   const [setupBannerDismissedUntil, setSetupBannerDismissedUntil] = useState<number | null>(null)
   const [toolsOpen, setToolsOpen] = useState(false)
@@ -84,6 +94,8 @@ function App() {
   const { data: agentStatusData } = useAgentStatus(selectedProject)
   const { data: setupStatus } = useSetupStatus()
   const { data: advancedSettings } = useAdvancedSettings()
+  const { data: projectRunDefaults } = useProjectRunDefaults(selectedProject)
+  const updateProjectRunDefaults = useUpdateProjectRunDefaults(selectedProject ?? '')
   const wsState = useProjectWebSocket(selectedProject)
   const selectedProjectData = projects?.find((p) => p.name === selectedProject) ?? null
   const setupRequired = Boolean(
@@ -131,6 +143,32 @@ function App() {
   }, [advancedSettings])
 
   const showSetupBanner = setupRequired && (!setupBannerDismissedUntil || setupBannerDismissedUntil < Date.now())
+  const isInitializingFeatures = Boolean(
+    selectedProject &&
+      !setupRequired &&
+      features &&
+      features.pending.length === 0 &&
+      features.in_progress.length === 0 &&
+      features.done.length === 0 &&
+      (features.staged?.length ?? 0) === 0 &&
+      wsState.agentStatus === 'running'
+  )
+  const isInitializingFeaturesCrashed = Boolean(
+    selectedProject &&
+      !setupRequired &&
+      features &&
+      features.pending.length === 0 &&
+      features.in_progress.length === 0 &&
+      features.done.length === 0 &&
+      (features.staged?.length ?? 0) === 0 &&
+      wsState.agentStatus === 'crashed'
+  )
+
+  useEffect(() => {
+    if (wsState.agentStatus === 'running') {
+      setRunStartError(null)
+    }
+  }, [wsState.agentStatus])
 
   // Play sounds when features move between columns
   useFeatureSound(features)
@@ -362,6 +400,20 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  // Apply project-scoped run defaults (when available).
+  useEffect(() => {
+    if (!selectedProject) return
+    if (!projectRunDefaults) return
+
+    setYoloEnabled(Boolean(projectRunDefaults.yolo_mode))
+    setRunSettings((prev) => ({
+      ...prev,
+      mode: projectRunDefaults.mode,
+      parallelCount: projectRunDefaults.parallel_count,
+      parallelPreset: projectRunDefaults.model_preset,
+    }))
+  }, [projectRunDefaults, selectedProject])
+
   // Combine WebSocket progress with feature data
   const progress = wsState.progress.total > 0 ? wsState.progress : {
     passing: features?.done.length ?? 0,
@@ -371,6 +423,16 @@ function App() {
 
   if (progress.total > 0 && progress.percentage === 0) {
     progress.percentage = Math.round((progress.passing / progress.total) * 100 * 10) / 10
+  }
+
+  const persistRunDefaults = (nextYoloEnabled: boolean, nextRunSettings: RunSettings) => {
+    if (!selectedProject) return
+    updateProjectRunDefaults.mutate({
+      yolo_mode: Boolean(nextYoloEnabled),
+      mode: nextYoloEnabled ? 'standard' : nextRunSettings.mode,
+      parallel_count: nextRunSettings.parallelCount,
+      model_preset: nextRunSettings.parallelPreset,
+    })
   }
 
   const handleSpecComplete = async (_specPath: string, yoloMode: boolean = false) => {
@@ -487,19 +549,18 @@ function App() {
                   <AgentControl
                     projectName={selectedProject}
                     status={wsState.agentStatus}
+                    setupRequired={setupRequired}
                     yoloMode={agentStatusData?.yolo_mode ?? false}
                     parallelMode={agentStatusData?.parallel_mode ?? false}
                     parallelCount={agentStatusData?.parallel_count ?? null}
                     modelPreset={agentStatusData?.model_preset ?? null}
                     yoloEnabled={yoloEnabled}
                     onToggleYolo={() => {
-                      setYoloEnabled((prev) => {
-                        const next = !prev
-                        if (next) {
-                          setRunSettings((s) => ({ ...s, mode: 'standard' }))
-                        }
-                        return next
-                      })
+                      const nextYolo = !yoloEnabled
+                      const nextRun = nextYolo ? { ...runSettings, mode: 'standard' as const } : runSettings
+                      setYoloEnabled(nextYolo)
+                      if (nextYolo) setRunSettings(nextRun)
+                      persistRunDefaults(nextYolo, nextRun)
                     }}
                     runMode={runSettings.mode}
                     parallelCountSetting={runSettings.parallelCount}
@@ -689,7 +750,10 @@ function App() {
               onSelectProject={(name) => requestSelectProject(name)}
               yoloEnabled={yoloEnabled}
               runSettings={runSettings}
-              onChangeRunSettings={(next) => setRunSettings(next)}
+              onChangeRunSettings={(next) => {
+                setRunSettings(next)
+                persistRunDefaults(yoloEnabled, next)
+              }}
               onClose={() => (window.location.hash = '')}
             />
           </div>
@@ -735,58 +799,76 @@ function App() {
                 }}
               />
             )}
-            {/* Progress Dashboard */}
-            <ProgressDashboard
-              passing={progress.passing}
-              total={progress.total}
-              percentage={progress.percentage}
-              isConnected={wsState.isConnected}
-            />
-
-            {selectedProject && (
-              <RecentActivityCard
-                projectName={selectedProject}
-                onOpen={() => {
+            {isInitializingFeatures || isInitializingFeaturesCrashed ? (
+              <InitializingFeaturesScreen
+                logs={wsState.logs}
+                isConnected={wsState.isConnected}
+                status={isInitializingFeaturesCrashed ? 'crashed' : 'running'}
+                error={runStartError}
+                onRestart={async () => {
+                  if (!selectedProject) return
+                  try {
+                    setRunStartError(null)
+                    if (yoloEnabled) {
+                      await startAgent(selectedProject, { yolo_mode: true, parallel_mode: false })
+                      return
+                    }
+                    if (runSettings.mode === 'parallel') {
+                      await startAgent(selectedProject, {
+                        parallel_mode: true,
+                        parallel_count: runSettings.parallelCount,
+                        model_preset: runSettings.parallelPreset,
+                        yolo_mode: false,
+                      })
+                      return
+                    }
+                    await startAgent(selectedProject, { yolo_mode: false, parallel_mode: false })
+                  } catch (e: any) {
+                    setRunStartError(e instanceof Error ? e.message : String(e))
+                  } finally {
+                    queryClient.invalidateQueries({ queryKey: ['agent-status', selectedProject] })
+                  }
+                }}
+                onOpenLogs={() => {
                   setLogsTab('activity')
                   setDebugOpen(true)
                 }}
               />
-            )}
+            ) : (
+              <>
+                {/* Progress Dashboard */}
+                <ProgressDashboard
+                  passing={progress.passing}
+                  total={progress.total}
+                  percentage={progress.percentage}
+                  isConnected={wsState.isConnected}
+                />
 
-            {/* Agent Status Grid - show when parallel agents are running */}
-            {selectedProject && (
-              <AgentStatusGrid
-                projectName={selectedProject}
-                onViewLogs={(agentId) => {
-                  setWorkerLogFocus(`${agentId}.log`)
-                  setLogsTab('workers')
-                  setDebugOpen(true)
-                }}
-              />
-            )}
+                {selectedProject && (
+                  <RecentActivityCard
+                    projectName={selectedProject}
+                    onOpen={() => {
+                      setLogsTab('activity')
+                      setDebugOpen(true)
+                    }}
+                  />
+                )}
 
-            {/* Agent Thought - shows latest agent narrative */}
-            <AgentThought
-              logs={wsState.logs}
-              agentStatus={wsState.agentStatus}
-            />
+                {/* Agent Status Grid - show when parallel agents are running */}
+                {selectedProject && (
+                  <AgentStatusGrid
+                    projectName={selectedProject}
+                    onViewLogs={(agentId) => {
+                      setWorkerLogFocus(`${agentId}.log`)
+                      setLogsTab('workers')
+                      setDebugOpen(true)
+                    }}
+                  />
+                )}
 
-            {/* Initializing Features State - show when agent is running but no features yet */}
-            {features &&
-             features.pending.length === 0 &&
-             features.in_progress.length === 0 &&
-             features.done.length === 0 &&
-             (features.staged?.length ?? 0) === 0 &&
-             wsState.agentStatus === 'running' && (
-              <div className="neo-card p-8 text-center">
-                <Loader2 size={32} className="animate-spin mx-auto mb-4 text-[var(--color-neo-progress)]" />
-                <h3 className="font-display font-bold text-xl mb-2">
-                  Initializing Features...
-                </h3>
-                <p className="text-[var(--color-neo-text-secondary)]">
-                  The agent is reading your spec and creating features. This may take a moment.
-                </p>
-              </div>
+                {/* Agent Thought - shows latest agent narrative */}
+                <AgentThought logs={wsState.logs} agentStatus={wsState.agentStatus} />
+              </>
             )}
 
             {selectedProject && features && (features.staged?.length ?? 0) > 0 && (
@@ -794,10 +876,12 @@ function App() {
             )}
 
             {/* Kanban Board */}
-            <KanbanBoard
-              features={features}
-              onFeatureClick={setSelectedFeature}
-            />
+            {!isInitializingFeatures && !isInitializingFeaturesCrashed && (
+              <KanbanBoard
+                features={features}
+                onFeatureClick={setSelectedFeature}
+              />
+            )}
           </div>
         )}
       </main>
@@ -857,13 +941,16 @@ function App() {
       )}
 
       {/* Settings Modal */}
-        {showSettings && selectedProject && (
-          <SettingsModal
-            onClose={() => setShowSettings(false)}
-            projectName={selectedProject}
-            yoloEnabled={yoloEnabled}
-            settings={runSettings}
-            onChange={(next) => setRunSettings(next)}
+      {showSettings && selectedProject && (
+        <SettingsModal
+          onClose={() => setShowSettings(false)}
+          projectName={selectedProject}
+          yoloEnabled={yoloEnabled}
+          settings={runSettings}
+          onChange={(next) => {
+            setRunSettings(next)
+            persistRunDefaults(yoloEnabled, next)
+          }}
           onOpenSettingsPage={() => {
             setShowSettings(false)
             window.location.hash = '#/settings'

@@ -271,17 +271,18 @@ async def run_autonomous_agent(
 
     features_state_dir = (features_project_dir or project_dir).resolve()
 
-    # Check if this is a fresh start or continuation
+    # Check if this is a fresh start or continuation.
     # Uses has_features() which checks if the database actually has features,
-    # not just if the file exists (empty db should still trigger initializer)
-    is_first_run = not has_features(features_state_dir)
+    # not just if the file exists (empty db should still trigger initializer).
+    needs_initializer = not has_features(features_state_dir)
+    initializer_failures = 0
 
-    if assigned_feature_id is not None and is_first_run:
+    if assigned_feature_id is not None and needs_initializer:
         raise RuntimeError(
             f"Assigned feature #{assigned_feature_id} but no features exist in {features_state_dir}"
         )
 
-    if is_first_run:
+    if needs_initializer:
         print("Fresh start - will use initializer agent")
         print()
         print("=" * 70)
@@ -331,9 +332,9 @@ async def run_autonomous_agent(
 
         # For single-agent runs, exit once everything is complete (including staged backlog),
         # unless explicitly configured to stay alive for new work.
-        # Skip this on the very first initializer session (fresh start) so we don't
+        # Skip this while we still need initializer so we don't
         # treat an empty DB as "done" before the initializer creates features.
-        if assigned_feature_id is None and not is_first_run:
+        if assigned_feature_id is None and not needs_initializer:
             try:
                 db = get_database(str(features_state_dir))
                 stats = db.get_stats()
@@ -349,14 +350,18 @@ async def run_autonomous_agent(
             except Exception:
                 pass
 
-        # Check max iterations
-        if max_iterations and iteration > max_iterations:
+        # Check max iterations.
+        #
+        # Important: do not let --max-iterations prematurely terminate the initializer loop.
+        # Parallel orchestration runs the initializer with max_iterations=1 to avoid starting
+        # coding sessions, but we still need to allow retries until the DB is populated (or fail).
+        if max_iterations and iteration > max_iterations and not needs_initializer:
             print(f"\nReached max iterations ({max_iterations})")
             print("To continue, run the script again without --max-iterations")
             break
 
         # Print session header
-        print_session_header(iteration, is_first_run)
+        print_session_header(iteration, needs_initializer)
 
         # Create client (fresh context)
         client = create_client(
@@ -368,9 +373,10 @@ async def run_autonomous_agent(
 
         # Choose prompt based on session type
         # Pass project_dir to enable project-specific prompts
-        if is_first_run:
+        if needs_initializer:
+            # Keep the legacy root-level app_spec.txt in sync for prompts that read from cwd.
+            copy_spec_to_project(project_dir)
             prompt = get_initializer_prompt(project_dir)
-            is_first_run = False  # Only use initializer once
         else:
             agent_mode = str(os.environ.get("AUTOCODER_AGENT_MODE", "")).strip().lower()
             if agent_mode in {"testing", "regression"}:
@@ -495,6 +501,26 @@ async def run_autonomous_agent(
         if max_iterations is None or iteration < max_iterations:
             print("\nPreparing next session...\n")
             await asyncio.sleep(1)
+
+        # After initializer sessions, ensure the database is populated.
+        if needs_initializer:
+            if has_features(features_state_dir):
+                needs_initializer = False
+            else:
+                initializer_failures += 1
+                print("\n" + "!" * 70)
+                print("  INITIALIZER DID NOT CREATE ANY FEATURES")
+                print("!" * 70)
+                print("The initializer session finished, but the feature database is still empty.")
+                print("This usually means the model did not call `feature_create_bulk` successfully.")
+                print("Retrying initializer...\n")
+                if initializer_failures >= 2:
+                    raise RuntimeError(
+                        "Initializer finished without creating features. "
+                        "Check the log for tool errors and ensure `feature_create_bulk` is callable."
+                    )
+                # Continue loop; run initializer prompt again.
+                continue
 
     # Final summary
     print("\n" + "=" * 70)

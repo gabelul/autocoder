@@ -597,6 +597,13 @@ def run_agent(args) -> None:
     if not project_dir:
         return
 
+    # Apply project-scoped runtime defaults unless user explicitly set env vars.
+    from autocoder.core.project_runtime_settings import apply_project_runtime_settings_env
+
+    os.environ.update(
+        apply_project_runtime_settings_env(project_dir, dict(os.environ), override_existing=False)
+    )
+
     try:
         asyncio.run(
             run_autonomous_agent(
@@ -623,6 +630,29 @@ def run_parallel(args) -> None:
     project_dir = resolve_project_dir(args.project_dir)
     if not project_dir:
         return
+
+    # Apply project-scoped runtime defaults unless user explicitly set env vars.
+    from autocoder.core.project_runtime_settings import apply_project_runtime_settings_env
+
+    os.environ.update(
+        apply_project_runtime_settings_env(project_dir, dict(os.environ), override_existing=False)
+    )
+    # Parallel mode requires git worktrees: bootstrap git if needed.
+    from autocoder.core.git_bootstrap import ensure_git_repo_for_parallel
+
+    ok, msg = ensure_git_repo_for_parallel(project_dir)
+    if not ok:
+        print("\nError: Parallel mode requires a git repository with an initial commit (used for worktrees).")
+        print(f"Project dir: {project_dir}")
+        print(f"\nAuto-fix failed: {msg}")
+        print("\nFix manually:")
+        print(f"  cd {project_dir}")
+        print("  git init")
+        print("  git add -A")
+        print("  git commit -m \"init\"")
+        print("\nOr run single-agent mode instead:")
+        print(f"  autocoder agent --project-dir {project_dir}")
+        raise SystemExit(2)
 
     # Validate parallel count
     parallel_count = args.parallel

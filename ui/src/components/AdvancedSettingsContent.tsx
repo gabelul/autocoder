@@ -45,6 +45,7 @@ const DEFAULTS: AdvancedSettings = {
   regression_pool_min_interval_s: 600,
   regression_pool_max_iterations: 1,
   planner_enabled: false,
+  planner_required: false,
   planner_model: '',
   planner_synthesizer: 'claude',
   planner_timeout_s: 180,
@@ -401,6 +402,14 @@ const HELP_CONTENT: Record<HelpTopic, { title: string; body: JSX.Element }> = {
           Planner generates a short plan per feature and prepends it to the worker prompt. Draft engines are configured in
           <span className="font-bold"> Settings → Engines</span>; an optional synthesizer can merge ideas.
         </p>
+        <div className="neo-card p-4 bg-[var(--color-neo-bg)] space-y-2">
+          <div className="font-display font-bold uppercase text-xs">Smart “required” mode</div>
+          <p className="text-[var(--color-neo-text-secondary)]">
+            Optional. When enabled, AutoCoder will try harder to ensure risky features get a plan before implementation
+            (e.g. after a failure, or for backend/infra work). It is fail‑open: if planning can’t run, it won’t deadlock
+            the queue.
+          </p>
+        </div>
         <p className="text-[var(--color-neo-text-secondary)]">
           Use it when features are complex, specs are messy, or you want more predictable step‑by‑step execution.
         </p>
@@ -1030,7 +1039,7 @@ export function AdvancedSettingsContent() {
                 </div>
               </details>
 
-              <details className="neo-card p-4" open={draft.planner_enabled}>
+              <details className="neo-card p-4" open={draft.planner_enabled || draft.planner_required}>
                 <summary className="font-display font-bold uppercase cursor-pointer select-none">Planner</summary>
                 <div className="flex justify-end mt-2">
                   <button
@@ -1050,6 +1059,18 @@ export function AdvancedSettingsContent() {
                       type="checkbox"
                       checked={draft.planner_enabled}
                       onChange={(e) => setDraft({ ...draft, planner_enabled: e.target.checked })}
+                      className="w-5 h-5"
+                    />
+                  </label>
+                  <label className="neo-card p-3 flex items-center justify-between cursor-pointer">
+                    <span className="font-display font-bold text-sm">Require plan (smart, fail-open)</span>
+                    <input
+                      type="checkbox"
+                      checked={draft.planner_required}
+                      onChange={(e) => {
+                        const next = e.target.checked
+                        setDraft({ ...draft, planner_required: next, planner_enabled: next ? true : draft.planner_enabled })
+                      }}
                       className="w-5 h-5"
                     />
                   </label>

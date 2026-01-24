@@ -17,6 +17,7 @@ from .activity import router as activity_router
 from .parallel import router as parallel_router
 from .settings import router as settings_router
 from .engine_settings import router as engine_settings_router
+from .project_settings import router as project_settings_router
 from .generate import router as generate_router
 from .project_config import router as project_config_router
 from .diagnostics import router as diagnostics_router
@@ -40,6 +41,7 @@ __all__ = [
     "parallel_router",
     "settings_router",
     "engine_settings_router",
+    "project_settings_router",
     "generate_router",
     "project_config_router",
     "diagnostics_router",
