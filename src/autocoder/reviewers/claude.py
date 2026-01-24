@@ -99,14 +99,15 @@ class ClaudeReviewer(Reviewer):
             import asyncio
 
             async def _run() -> str:
-                await client.query(prompt)
-                text = ""
-                async for msg in client.receive_response():
-                    if type(msg).__name__ == "AssistantMessage" and hasattr(msg, "content"):
-                        for block in msg.content:
-                            if type(block).__name__ == "TextBlock" and hasattr(block, "text"):
-                                text += block.text
-                return text
+                async with client:
+                    await client.query(prompt)
+                    text = ""
+                    async for msg in client.receive_response():
+                        if type(msg).__name__ == "AssistantMessage" and hasattr(msg, "content"):
+                            for block in msg.content:
+                                if type(block).__name__ == "TextBlock" and hasattr(block, "text"):
+                                    text += block.text
+                    return text
 
             raw = asyncio.run(_run())
         except Exception as e:

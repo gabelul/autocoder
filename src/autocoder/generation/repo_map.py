@@ -170,14 +170,15 @@ async def _run_claude_repo_map(
     )
 
     async def _collect() -> str:
-        await client.query(_build_map_prompt())
-        text = ""
-        async for msg in client.receive_response():
-            if type(msg).__name__ == "AssistantMessage" and hasattr(msg, "content"):
-                for block in msg.content:
-                    if type(block).__name__ == "TextBlock" and hasattr(block, "text"):
-                        text += block.text
-        return text.strip()
+        async with client:
+            await client.query(_build_map_prompt())
+            text = ""
+            async for msg in client.receive_response():
+                if type(msg).__name__ == "AssistantMessage" and hasattr(msg, "content"):
+                    for block in msg.content:
+                        if type(block).__name__ == "TextBlock" and hasattr(block, "text"):
+                            text += block.text
+            return text.strip()
 
     return await asyncio.wait_for(_collect(), timeout=timeout_s)
 

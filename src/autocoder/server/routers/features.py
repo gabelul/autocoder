@@ -393,3 +393,38 @@ async def skip_feature(project_name: str, feature_id: int):
     except Exception:
         logger.exception("Failed to skip feature")
         raise HTTPException(status_code=500, detail="Failed to skip feature")
+
+
+@router.post("/{feature_id}/retry", response_model=FeatureResponse)
+async def retry_blocked_feature(project_name: str, feature_id: int):
+    """
+    Force a BLOCKED feature back to PENDING so it can be attempted again.
+
+    Useful when a systemic issue was fixed (missing CLI, SDK bug, etc.).
+    """
+    project_name = validate_project_name(project_name)
+    project_dir = _get_project_path(project_name).resolve()
+
+    if not project_dir.exists():
+        raise HTTPException(status_code=404, detail="Project directory not found")
+
+    db = get_database(str(project_dir))
+
+    row = db.get_feature(int(feature_id))
+    if not row:
+        raise HTTPException(status_code=404, detail=f"Feature {feature_id} not found")
+
+    status = str(row.get("status") or "").upper()
+    if status != "BLOCKED":
+        raise HTTPException(status_code=400, detail="Only BLOCKED features can be retried")
+
+    ok = db.force_retry_feature(int(feature_id), preserve_branch=True)
+    if not ok:
+        raise HTTPException(status_code=500, detail="Failed to retry feature")
+
+    row = db.get_feature(int(feature_id))
+    if not row:
+        raise HTTPException(status_code=500, detail="Failed to load retried feature")
+
+    dep_map = db.get_dependency_statuses([int(feature_id)])
+    return _feature_to_response(row, deps=dep_map.get(int(feature_id), []))

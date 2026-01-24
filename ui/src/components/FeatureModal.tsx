@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
-import { X, CheckCircle2, Circle, SkipForward, Trash2, Loader2, AlertCircle, Pencil, PauseCircle, Play } from 'lucide-react'
-import { useSkipFeature, useDeleteFeature, useEnqueueFeature } from '../hooks/useProjects'
+import { X, CheckCircle2, Circle, SkipForward, Trash2, Loader2, AlertCircle, Pencil, PauseCircle, Play, RotateCcw } from 'lucide-react'
+import { useSkipFeature, useDeleteFeature, useEnqueueFeature, useRetryBlockedFeature } from '../hooks/useProjects'
 import type { Feature } from '../lib/types'
 import { EditFeatureForm } from './EditFeatureForm'
 
@@ -45,6 +45,7 @@ export function FeatureModal({ feature, projectName, onClose }: FeatureModalProp
   const skipFeature = useSkipFeature(projectName)
   const deleteFeature = useDeleteFeature(projectName)
   const enqueueFeature = useEnqueueFeature(projectName)
+  const retryFeature = useRetryBlockedFeature(projectName)
 
   const handleSkip = async () => {
     setError(null)
@@ -73,6 +74,16 @@ export function FeatureModal({ feature, projectName, onClose }: FeatureModalProp
       onClose()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to enqueue feature')
+    }
+  }
+
+  const handleRetry = async () => {
+    setError(null)
+    try {
+      await retryFeature.mutateAsync(feature.id)
+      onClose()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to retry feature')
     }
   }
 
@@ -295,6 +306,23 @@ export function FeatureModal({ feature, projectName, onClose }: FeatureModalProp
                 >
                   <Pencil size={18} />
                 </button>
+                {status === 'BLOCKED' && (
+                  <button
+                    onClick={handleRetry}
+                    disabled={retryFeature.isPending}
+                    className="neo-btn neo-btn-primary flex-1"
+                    title="Retry this blocked feature"
+                  >
+                    {retryFeature.isPending ? (
+                      <Loader2 size={18} className="animate-spin" />
+                    ) : (
+                      <>
+                        <RotateCcw size={18} />
+                        Retry
+                      </>
+                    )}
+                  </button>
+                )}
                 {isStaged && (
                   <button
                     onClick={handleEnqueue}

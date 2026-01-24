@@ -310,19 +310,20 @@ async def _claude_synthesize(prompt: str, model: str, workdir: Path, timeout_s: 
         )
     )
     try:
-        # Timebox the entire synthesis (query + streaming response) to avoid blocking orchestrator flows.
-        await asyncio.wait_for(client.query(prompt), timeout=timeout_s)
+        async with client:
+            # Timebox the entire synthesis (query + streaming response) to avoid blocking orchestrator flows.
+            await asyncio.wait_for(client.query(prompt), timeout=timeout_s)
 
-        async def _collect() -> str:
-            text = ""
-            async for msg in client.receive_response():
-                if type(msg).__name__ == "AssistantMessage" and hasattr(msg, "content"):
-                    for block in msg.content:
-                        if type(block).__name__ == "TextBlock" and hasattr(block, "text"):
-                            text += block.text
-            return text.strip()
+            async def _collect() -> str:
+                text = ""
+                async for msg in client.receive_response():
+                    if type(msg).__name__ == "AssistantMessage" and hasattr(msg, "content"):
+                        for block in msg.content:
+                            if type(block).__name__ == "TextBlock" and hasattr(block, "text"):
+                                text += block.text
+                return text.strip()
 
-        text = await asyncio.wait_for(_collect(), timeout=timeout_s)
+            text = await asyncio.wait_for(_collect(), timeout=timeout_s)
         return True, text, ""
     except Exception as e:
         return False, "", str(e)
