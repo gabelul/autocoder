@@ -40,7 +40,7 @@ export function KanbanColumn({
       </div>
 
       {/* Cards */}
-      <div className="p-4 space-y-3 max-h-[600px] overflow-y-auto bg-[var(--color-neo-bg)]">
+      <div className="p-4 space-y-3 max-h-[72vh] overflow-y-auto bg-[var(--color-neo-bg)]">
         {features.length === 0 ? (
           <div className="text-center py-8 text-[var(--color-neo-text-secondary)]">
             No features
