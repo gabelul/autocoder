@@ -4,12 +4,13 @@ import type { Feature, FeatureListResponse } from '../lib/types'
 interface KanbanBoardProps {
   features: FeatureListResponse | undefined
   onFeatureClick: (feature: Feature) => void
+  className?: string
 }
 
-export function KanbanBoard({ features, onFeatureClick }: KanbanBoardProps) {
+export function KanbanBoard({ features, onFeatureClick, className }: KanbanBoardProps) {
   if (!features) {
     return (
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+      <div className={`grid grid-cols-1 md:grid-cols-4 gap-6 ${className ?? ''}`}>
         {['Staged', 'Pending', 'In Progress', 'Done'].map(title => (
           <div key={title} className="neo-card p-4">
             <div className="h-8 bg-[var(--color-neo-bg)] animate-pulse mb-4" />
@@ -45,7 +46,7 @@ export function KanbanBoard({ features, onFeatureClick }: KanbanBoardProps) {
   }
 
   return (
-    <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+    <div className={`grid grid-cols-1 md:grid-cols-4 md:grid-rows-1 gap-6 items-stretch ${className ?? ''}`}>
       <KanbanColumn
         title="Staged"
         count={features.staged.length}

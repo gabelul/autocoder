@@ -28,7 +28,7 @@ import { AgentThought } from './components/AgentThought'
 import { AssistantFAB } from './components/AssistantFAB'
 import { AssistantPanel } from './components/AssistantPanel'
 import { AgentStatusGrid } from './components/AgentStatusGrid'
-import { RecentActivityCard } from './components/RecentActivityCard'
+import { ActivityFeedPanel } from './components/ActivityFeedPanel'
 import { InitializingFeaturesScreen } from './components/InitializingFeaturesScreen'
 import { NewProjectModal } from './components/NewProjectModal'
 import { SettingsModal, type RunSettings } from './components/SettingsModal'
@@ -425,6 +425,16 @@ function App() {
     progress.percentage = Math.round((progress.passing / progress.total) * 100 * 10) / 10
   }
 
+  const featureCounts = features
+    ? {
+        staged: features.staged.length,
+        pending: features.pending.length,
+        in_progress: features.in_progress.length,
+        done: features.done.length,
+        blocked: features.pending.filter((f) => String(f.status || '').toUpperCase() === 'BLOCKED').length,
+      }
+    : undefined
+
   const persistRunDefaults = (nextYoloEnabled: boolean, nextRunSettings: RunSettings) => {
     if (!selectedProject) return
     updateProjectRunDefaults.mutate({
@@ -775,7 +785,7 @@ function App() {
             }}
           />
         ) : (
-          <div className="space-y-8">
+          <div className="space-y-4">
             {showSetupBanner && selectedProject && (
               <ProjectSetupRequired
                 projectName={selectedProject}
@@ -836,48 +846,66 @@ function App() {
               />
             ) : (
               <>
-                {/* Kanban Board (primary) */}
-                <KanbanBoard
-                  features={features}
-                  onFeatureClick={setSelectedFeature}
-                />
-
-                {selectedProject && features && (features.staged?.length ?? 0) > 0 && (
-                  <StagedBacklogPanel projectName={selectedProject} stagedCount={features.staged.length} />
-                )}
-
-                {/* Progress Dashboard */}
                 <ProgressDashboard
                   passing={progress.passing}
                   total={progress.total}
                   percentage={progress.percentage}
                   isConnected={wsState.isConnected}
+                  agentStatus={wsState.agentStatus}
+                  featureCounts={featureCounts}
                 />
 
-                {selectedProject && (
-                  <RecentActivityCard
-                    projectName={selectedProject}
-                    onOpen={() => {
-                      setLogsTab('activity')
-                      setDebugOpen(true)
-                    }}
-                  />
-                )}
+                <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_380px] gap-6 items-start">
+                  <div className="min-w-0">
+                    {/* Kanban Board (primary) */}
+                    <div className="min-h-[520px] xl:h-[calc(100vh-280px)]">
+                      <KanbanBoard
+                        className="xl:h-full"
+                        features={features}
+                        onFeatureClick={setSelectedFeature}
+                      />
+                    </div>
+                  </div>
 
-                {/* Agent Status Grid - show when parallel agents are running */}
-                {selectedProject && (
-                  <AgentStatusGrid
-                    projectName={selectedProject}
-                    onViewLogs={(agentId) => {
-                      setWorkerLogFocus(`${agentId}.log`)
-                      setLogsTab('workers')
-                      setDebugOpen(true)
-                    }}
-                  />
-                )}
+                  {selectedProject ? (
+                    <div className="neo-card p-4 flex flex-col min-h-[520px] xl:min-h-0 xl:h-[calc(100vh-280px)] xl:sticky xl:top-24">
+                      <ActivityFeedPanel
+                        projectName={selectedProject}
+                        dense
+                        onOpenFull={() => {
+                          setLogsTab('activity')
+                          setDebugOpen(true)
+                        }}
+                      />
+                    </div>
+                  ) : null}
+                </div>
 
-                {/* Agent Thought - shows latest agent narrative */}
-                <AgentThought logs={wsState.logs} agentStatus={wsState.agentStatus} />
+                <details className="neo-card p-4">
+                  <summary className="cursor-pointer select-none font-display font-bold uppercase tracking-wide">
+                    Details
+                  </summary>
+                  <div className="mt-4 space-y-6">
+                    {selectedProject && features && (features.staged?.length ?? 0) > 0 && (
+                      <StagedBacklogPanel projectName={selectedProject} stagedCount={features.staged.length} />
+                    )}
+
+                    {/* Agent Status Grid - show when parallel agents are running */}
+                    {selectedProject && (
+                      <AgentStatusGrid
+                        projectName={selectedProject}
+                        onViewLogs={(agentId) => {
+                          setWorkerLogFocus(`${agentId}.log`)
+                          setLogsTab('workers')
+                          setDebugOpen(true)
+                        }}
+                      />
+                    )}
+
+                    {/* Agent Thought - shows latest agent narrative */}
+                    <AgentThought logs={wsState.logs} agentStatus={wsState.agentStatus} />
+                  </div>
+                </details>
               </>
             )}
           </div>
