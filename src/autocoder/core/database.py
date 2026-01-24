@@ -1903,6 +1903,44 @@ class Database:
             conn.commit()
             return cursor.rowcount > 0
 
+    def force_retry_feature(self, feature_id: int, *, preserve_branch: bool = True) -> bool:
+        """
+        Force a BLOCKED feature back to PENDING so it can be attempted again.
+
+        This clears backoff + error/diff streaks so the feature becomes claimable again
+        (assuming no dependencies).
+        """
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT branch_name FROM features WHERE id = ?", (int(feature_id),))
+            row = cursor.fetchone()
+            if not row:
+                return False
+            branch_name = row[0]
+            cursor.execute(
+                """
+                UPDATE features
+                SET status = 'PENDING',
+                    enabled = 1,
+                    assigned_agent_id = NULL,
+                    assigned_at = NULL,
+                    branch_name = ?,
+                    review_status = 'PENDING',
+                    passes = FALSE,
+                    completed_at = NULL,
+                    next_attempt_at = NULL,
+                    last_error_key = NULL,
+                    same_error_streak = 0,
+                    last_diff_fingerprint = NULL,
+                    same_diff_streak = 0,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ? AND status = 'BLOCKED'
+                """,
+                ((branch_name if preserve_branch else None), int(feature_id)),
+            )
+            conn.commit()
+            return cursor.rowcount > 0
+
     def increment_qa_attempts(self, feature_id: int) -> int | None:
         """Increment QA sub-agent attempts and return the new value."""
         with self.get_connection() as conn:

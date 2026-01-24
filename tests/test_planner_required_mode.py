@@ -32,6 +32,16 @@ def test_planner_required_writes_fallback_plan(monkeypatch: pytest.MonkeyPatch) 
         _init_git_repo(repo_path)
         orch = Orchestrator(project_dir=str(repo_path), max_agents=0)
 
+        # Force the planner to be unavailable so the deterministic fallback is exercised,
+        # regardless of local machine credentials/CLIs.
+        from autocoder.generation.multi_model import MultiModelGenerateConfig
+
+        monkeypatch.setattr(
+            orch,
+            "_planner_build_plan_cfg",
+            lambda: (MultiModelGenerateConfig(agents=[], synthesizer="none", timeout_s=1), False, "forced"),
+        )
+
         worktree = repo_path / "worktrees" / "agent-1"
         worktree.mkdir(parents=True, exist_ok=True)
 

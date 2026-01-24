@@ -181,6 +181,17 @@ export function useEnqueueFeature(projectName: string) {
   })
 }
 
+export function useRetryBlockedFeature(projectName: string) {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: (featureId: number) => api.retryBlockedFeature(projectName, featureId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['features', projectName] })
+    },
+  })
+}
+
 export function useEnqueueFeatures(projectName: string) {
   const queryClient = useQueryClient()
 
