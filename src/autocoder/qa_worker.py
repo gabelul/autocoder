@@ -89,9 +89,48 @@ def _strip_fences(text: str) -> str:
 
 def _looks_like_unified_diff(patch: str) -> bool:
     s = patch.strip()
-    # Require a git-style header; this avoids confusing our internal apply_patch format (*** Begin Patch)
-    # with a git-apply-compatible diff.
-    return s.startswith("diff --git ") or ("diff --git " in s)
+    if not s:
+        return False
+    # Guardrail: our repo uses an internal apply_patch format in other contexts. It's not compatible
+    # with `git apply` here, so reject it explicitly to produce a helpful error.
+    if s.startswith("*** Begin Patch"):
+        return False
+
+    # Git-style header is ideal (most deterministic across tools/models).
+    if s.startswith("diff --git ") or ("diff --git " in s):
+        return True
+
+    # Also accept standard unified diffs that omit the `diff --git` header.
+    # `git apply` can handle these as long as file headers + hunks are present.
+    if ("--- " in s) and ("+++ " in s) and ("\n@@ " in s or s.startswith("@@ ") or "@@ " in s):
+        return True
+
+    return False
+
+
+def _trim_to_diff_start(text: str) -> str:
+    """
+    Best-effort trim model output to the first diff header.
+
+    Some CLIs/models prepend prose even when instructed to return a patch only.
+    """
+    s = (text or "").strip()
+    if not s:
+        return ""
+
+    # Prefer git-style headers; fall back to unified headers.
+    markers = ["diff --git ", "\n--- ", "--- "]
+    best: int | None = None
+    for m in markers:
+        idx = s.find(m)
+        if idx < 0:
+            continue
+        if best is None or idx < best:
+            best = idx
+    if best is not None and best > 0:
+        s = s[best:].lstrip()
+
+    return s
 
 
 def _git(cwd: Path, args: list[str], *, check: bool = True, timeout_s: int = 120) -> subprocess.CompletedProcess:
@@ -201,11 +240,11 @@ def _read_feature_plan(repo: Path, *, max_chars: int = 6000) -> str:
 def _apply_patch(repo: Path, patch_text: str) -> tuple[bool, str]:
     patch_text = _strip_fences(patch_text)
     patch_text = patch_text.replace("\r\n", "\n").replace("\r", "\n")
-    # If a model included preamble text, keep only from the first diff header.
-    if "diff --git " in patch_text and not patch_text.lstrip().startswith("diff --git "):
-        patch_text = patch_text[patch_text.find("diff --git ") :].lstrip()
+    patch_text = _trim_to_diff_start(patch_text)
     if not _looks_like_unified_diff(patch_text):
-        return False, "Patch did not look like a unified diff"
+        if patch_text.lstrip().startswith("*** Begin Patch"):
+            return False, "Patch used AutoCoder apply_patch format; expected a git-style unified diff"
+        return False, "Patch did not look like a git-style unified diff (expected 'diff --git' or '---/+++' headers)"
     if not patch_text.endswith("\n"):
         patch_text += "\n"
     with tempfile.NamedTemporaryFile("w", delete=False, suffix=".patch", encoding="utf-8") as f:
