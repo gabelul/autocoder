@@ -20,6 +20,7 @@ from pydantic import BaseModel, Field
 from autocoder.agent.registry import get_project_path
 from autocoder.generation.multi_model import MultiModelGenerateConfig, generate_multi_model_artifact
 from autocoder.generation.gsd import get_gsd_status, build_gsd_to_spec_prompt
+from autocoder.generation.repo_map import get_repo_map_status, generate_repo_map_to_knowledge
 
 
 logger = logging.getLogger(__name__)
@@ -61,6 +62,27 @@ class GsdToSpecRequest(BaseModel):
     no_synthesize: bool = False
     timeout_s: int = Field(default=0, ge=0, le=36000)
     out: str = ""  # optional absolute path
+
+
+class RepoMapStatusResponse(BaseModel):
+    exists: bool
+    knowledge_dir: str
+    present: list[str]
+    missing: list[str]
+
+
+class RepoMapRequest(BaseModel):
+    overwrite: bool = True
+    timeout_s: int = Field(default=900, ge=30, le=36000)
+    model: str = Field(default="", max_length=128)
+
+
+class RepoMapResponse(BaseModel):
+    knowledge_dir: str
+    artifacts_dir: str
+    files: list[str]
+    model: str
+    timestamp: str
 
 
 @router.post("/{project_name}", response_model=GenerateResponse)
@@ -174,3 +196,63 @@ async def gsd_to_spec(project_name: str, req: GsdToSpecRequest = GsdToSpecReques
         raise HTTPException(status_code=500, detail=f"GSD to spec failed: {e}") from e
 
     return GenerateResponse(output_path=result["output_path"], drafts_dir=result["drafts_dir"])
+
+
+@router.get("/{project_name}/map/status", response_model=RepoMapStatusResponse)
+async def repo_map_status(project_name: str) -> RepoMapStatusResponse:
+    if not validate_project_name(project_name):
+        raise HTTPException(status_code=400, detail="Invalid project name")
+
+    project_dir = get_project_path(project_name)
+    if not project_dir:
+        raise HTTPException(status_code=404, detail="Project not found in registry")
+    project_dir = Path(project_dir)
+    if not project_dir.exists():
+        raise HTTPException(status_code=404, detail="Project directory not found")
+
+    st = get_repo_map_status(project_dir)
+    return RepoMapStatusResponse(
+        exists=st.exists,
+        knowledge_dir=str(st.knowledge_dir),
+        present=st.present,
+        missing=st.missing,
+    )
+
+
+@router.post("/{project_name}/map/to-knowledge", response_model=RepoMapResponse)
+async def repo_map_to_knowledge(project_name: str, req: RepoMapRequest = RepoMapRequest()) -> RepoMapResponse:
+    if not validate_project_name(project_name):
+        raise HTTPException(status_code=400, detail="Invalid project name")
+
+    project_dir = get_project_path(project_name)
+    if not project_dir:
+        raise HTTPException(status_code=404, detail="Project not found in registry")
+    project_dir = Path(project_dir)
+    if not project_dir.exists():
+        raise HTTPException(status_code=404, detail="Project directory not found")
+
+    def _run() -> dict:
+        return generate_repo_map_to_knowledge(
+            project_dir,
+            overwrite=bool(req.overwrite),
+            timeout_s=int(req.timeout_s),
+            model=(req.model.strip() or None),
+        )
+
+    try:
+        result = await anyio.to_thread.run_sync(_run)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except RuntimeError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except Exception as e:
+        logger.exception("Repo map failed")
+        raise HTTPException(status_code=500, detail=f"Repo map failed: {e}") from e
+
+    return RepoMapResponse(
+        knowledge_dir=str(result.get("knowledge_dir") or ""),
+        artifacts_dir=str(result.get("artifacts_dir") or ""),
+        files=list(result.get("files") or []),
+        model=str(result.get("model") or ""),
+        timestamp=str(result.get("timestamp") or ""),
+    )

@@ -8,6 +8,7 @@ export type ParallelPreset = 'quality' | 'balanced' | 'economy' | 'cheap' | 'exp
 interface AgentControlProps {
   projectName: string
   status: AgentStatus
+  setupRequired?: boolean
 
   // Current running mode (from server status)
   yoloMode?: boolean
@@ -26,6 +27,7 @@ interface AgentControlProps {
 export function AgentControl({
   projectName,
   status,
+  setupRequired = false,
   yoloMode = false,
   parallelMode = false,
   parallelCount = null,
@@ -42,6 +44,7 @@ export function AgentControl({
   const resumeAgent = useResumeAgent(projectName)
 
   const isLoading = startAgent.isPending || stopAgent.isPending || pauseAgent.isPending || resumeAgent.isPending
+  const startDisabled = Boolean(isLoading || setupRequired)
 
   const handleStart = () => {
     if (yoloEnabled) {
@@ -111,9 +114,9 @@ export function AgentControl({
 
             <button
               onClick={handleStart}
-              disabled={isLoading}
+              disabled={startDisabled}
               className="neo-btn neo-btn-success text-sm py-2 px-3"
-              title={startTitle}
+              title={setupRequired ? 'Project setup required: create prompts/app_spec.txt first' : startTitle}
             >
               {isLoading ? <Loader2 size={18} className="animate-spin" /> : <Play size={18} />}
             </button>

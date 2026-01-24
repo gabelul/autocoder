@@ -71,7 +71,9 @@ def load_prompt(name: str, project_dir: Path | None = None) -> str:
 def get_initializer_prompt(project_dir: Path | None = None) -> str:
     """Load the initializer prompt (project-specific if available)."""
     prompt = load_prompt("initializer_prompt", project_dir)
-    return _append_knowledge(prompt, project_dir)
+    prompt = _append_knowledge(prompt, project_dir)
+    prompt = _append_initializer_batching_guidance(prompt)
+    return prompt
 
 
 def get_coding_prompt(project_dir: Path | None = None) -> str:
@@ -238,23 +240,83 @@ def copy_spec_to_project(project_dir: Path) -> None:
     """
     spec_dest = project_dir / "app_spec.txt"
 
-    # Don't overwrite if already exists
-    if spec_dest.exists():
-        return
-
-    # Copy from project prompts directory
+    # Prefer prompts/app_spec.txt as source of truth.
     project_prompts = get_project_prompts_dir(project_dir)
     project_spec = project_prompts / "app_spec.txt"
     if project_spec.exists():
         try:
-            shutil.copy(project_spec, spec_dest)
-            print("Copied app_spec.txt to project directory")
-            return
+            src = project_spec.read_text(encoding="utf-8", errors="replace")
         except (OSError, PermissionError) as e:
-            print(f"Warning: Could not copy app_spec.txt: {e}")
+            print(f"Warning: Could not read {project_spec}: {e}")
+            src = ""
+
+        if src.strip():
+            try:
+                dest_text = spec_dest.read_text(encoding="utf-8", errors="replace") if spec_dest.exists() else ""
+            except Exception:
+                dest_text = ""
+
+            # Keep the project root copy in sync so prompts that read `app_spec.txt` in cwd
+            # don't accidentally use a stale/placeholder legacy file.
+            if not spec_dest.exists() or dest_text != src:
+                try:
+                    spec_dest.write_text(src, encoding="utf-8")
+                    print("Synced app_spec.txt to project directory")
+                except (OSError, PermissionError) as e:
+                    print(f"Warning: Could not write {spec_dest}: {e}")
             return
 
-    print("Warning: No app_spec.txt found to copy to project directory")
+    # Fallback: if only legacy app_spec exists, do nothing.
+    if spec_dest.exists():
+        return
+
+    print("Warning: No prompts/app_spec.txt found to copy to project directory")
+
+
+def _extract_required_feature_count(prompt: str) -> int | None:
+    """
+    Best-effort extraction for the required initializer feature count.
+
+    We support both:
+    - "create exactly **270** features"
+    - "create exactly 270 features"
+    """
+    import re
+
+    text = prompt or ""
+    m = re.search(r"create\\s+exactly\\s+\\*\\*(\\d{1,5})\\*\\*\\s+features", text, flags=re.IGNORECASE)
+    if not m:
+        m = re.search(r"create\\s+exactly\\s+(\\d{1,5})\\s+features", text, flags=re.IGNORECASE)
+    if not m:
+        return None
+    try:
+        return int(m.group(1))
+    except Exception:
+        return None
+
+
+def _append_initializer_batching_guidance(prompt: str) -> str:
+    """
+    If the required feature count is large, add explicit batching guidance.
+
+    Without this, the initializer can fail silently by attempting to create hundreds of
+    features in a single tool call, which is brittle for LLM tool-output limits.
+    """
+    count = _extract_required_feature_count(prompt)
+    if not count or count < 120:
+        return prompt
+
+    extra = (
+        "\n\n---\n\n"
+        "## IMPORTANT: LARGE FEATURE COUNT BATCHING\n\n"
+        f"This project requires **{count}** features, which is too large for a single tool call.\n\n"
+        "Do this instead:\n"
+        "- Create features in batches of **25–50** using multiple `feature_create_bulk` calls.\n"
+        "- After each batch, call `feature_get_stats` to confirm the database count is increasing.\n"
+        "- Continue until the total created equals the required count exactly.\n"
+        "- Do **not** end the initializer session until the feature database is populated.\n"
+    )
+    return prompt + extra
 
 
 def enhance_prompt_with_knowledge(prompt: str, feature: dict) -> str:

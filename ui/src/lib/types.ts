@@ -171,6 +171,24 @@ export interface AgentScheduleResponse {
   message?: string | null
 }
 
+// Project-scoped UI defaults/settings (stored in project agent_system.db)
+export interface ProjectRunDefaults {
+  yolo_mode: boolean
+  mode: 'standard' | 'parallel'
+  parallel_count: number
+  model_preset: 'quality' | 'balanced' | 'economy' | 'cheap' | 'experimental' | 'custom'
+}
+
+export interface ProjectRuntimeSettings {
+  planner_enabled: boolean
+  planner_required: boolean
+  require_gatekeeper: boolean
+  allow_no_tests: boolean
+  stop_when_done: boolean
+  locks_enabled: boolean
+  worker_verify: boolean
+}
+
 // Setup types
 export interface SetupStatus {
   claude_cli: boolean
@@ -273,6 +291,7 @@ export interface AdvancedSettings {
   regression_pool_max_iterations: number
 
   planner_enabled: boolean
+  planner_required: boolean
   planner_model: string
   planner_synthesizer: PlannerSynthesizer
   planner_timeout_s: number

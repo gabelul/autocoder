@@ -57,6 +57,7 @@ class AdvancedSettingsModel(BaseModel):
     regression_pool_max_iterations: int = Field(default=1, ge=1, le=5)
 
     planner_enabled: bool = False
+    planner_required: bool = False
     planner_model: str = Field(default="", max_length=128)
     planner_synthesizer: PlannerSynthesizer = Field(default="claude")
     planner_timeout_s: int = Field(default=180, ge=30, le=3600)

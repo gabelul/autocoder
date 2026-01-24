@@ -18,6 +18,8 @@ import type {
   AgentStartRequest,
   AgentScheduleRequest,
   AgentScheduleResponse,
+  ProjectRunDefaults,
+  ProjectRuntimeSettings,
   SetupStatus,
   DirectoryListResponse,
   PathValidationResponse,
@@ -79,6 +81,34 @@ export async function createProject(
 
 export async function getProject(name: string): Promise<ProjectDetail> {
   return fetchJSON(`/projects/${encodeURIComponent(name)}`)
+}
+
+export async function getProjectRunDefaults(name: string): Promise<ProjectRunDefaults> {
+  return fetchJSON(`/projects/${encodeURIComponent(name)}/settings/run-defaults`)
+}
+
+export async function updateProjectRunDefaults(
+  name: string,
+  defaults: ProjectRunDefaults
+): Promise<ProjectRunDefaults> {
+  return fetchJSON(`/projects/${encodeURIComponent(name)}/settings/run-defaults`, {
+    method: 'PUT',
+    body: JSON.stringify(defaults),
+  })
+}
+
+export async function getProjectRuntimeSettings(name: string): Promise<ProjectRuntimeSettings> {
+  return fetchJSON(`/projects/${encodeURIComponent(name)}/settings/runtime`)
+}
+
+export async function updateProjectRuntimeSettings(
+  name: string,
+  settings: ProjectRuntimeSettings
+): Promise<ProjectRuntimeSettings> {
+  return fetchJSON(`/projects/${encodeURIComponent(name)}/settings/runtime`, {
+    method: 'PUT',
+    body: JSON.stringify(settings),
+  })
 }
 
 export async function getProjectDeleteInfo(name: string): Promise<ProjectDeleteInfo> {
@@ -590,6 +620,38 @@ export async function getGsdStatus(projectName: string): Promise<GsdStatusRespon
 
 export async function gsdToSpec(projectName: string, req: GsdToSpecRequest): Promise<GenerateArtifactResponse> {
   return fetchJSON(`/generate/${encodeURIComponent(projectName)}/gsd/to-spec`, {
+    method: 'POST',
+    body: JSON.stringify(req),
+  })
+}
+
+export interface RepoMapStatusResponse {
+  exists: boolean
+  knowledge_dir: string
+  present: string[]
+  missing: string[]
+}
+
+export interface RepoMapRequest {
+  overwrite?: boolean
+  timeout_s?: number
+  model?: string
+}
+
+export interface RepoMapResponse {
+  knowledge_dir: string
+  artifacts_dir: string
+  files: string[]
+  model: string
+  timestamp: string
+}
+
+export async function getRepoMapStatus(projectName: string): Promise<RepoMapStatusResponse> {
+  return fetchJSON(`/generate/${encodeURIComponent(projectName)}/map/status`)
+}
+
+export async function repoMapToKnowledge(projectName: string, req: RepoMapRequest): Promise<RepoMapResponse> {
+  return fetchJSON(`/generate/${encodeURIComponent(projectName)}/map/to-knowledge`, {
     method: 'POST',
     body: JSON.stringify(req),
   })

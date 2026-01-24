@@ -70,6 +70,9 @@ class AdvancedSettings:
 
     # Feature planner (optional; multi-model plan artifact)
     planner_enabled: bool = False
+    # Planner required (smart; fail-open). When enabled, AutoCoder will ensure "risky" features get a
+    # plan artifact (or a safe fallback) before implementation to reduce guessing in brownfield repos.
+    planner_required: bool = False
     planner_model: str = ""  # Claude model for synthesis (optional)
     planner_synthesizer: str = "claude"  # none|claude|codex|gemini
     planner_timeout_s: int = 180
@@ -121,6 +124,7 @@ class AdvancedSettings:
     skip_port_check: bool = False
 
     def to_env(self) -> dict[str, str]:
+        planner_enabled = bool(self.planner_enabled or self.planner_required)
         return {
             "AUTOCODER_REVIEW_ENABLED": "1" if self.review_enabled else "0",
             "AUTOCODER_REVIEW_MODE": str(self.review_mode or "off"),
@@ -145,7 +149,8 @@ class AdvancedSettings:
             "AUTOCODER_REGRESSION_POOL_MODEL": str(self.regression_pool_model or ""),
             "AUTOCODER_REGRESSION_POOL_MIN_INTERVAL_S": str(int(self.regression_pool_min_interval_s or 600)),
             "AUTOCODER_REGRESSION_POOL_MAX_ITERATIONS": str(int(self.regression_pool_max_iterations or 1)),
-            "AUTOCODER_PLANNER_ENABLED": "1" if self.planner_enabled else "0",
+            "AUTOCODER_PLANNER_ENABLED": "1" if planner_enabled else "0",
+            "AUTOCODER_PLANNER_REQUIRED": "1" if self.planner_required else "0",
             "AUTOCODER_PLANNER_MODEL": str(self.planner_model or ""),
             "AUTOCODER_PLANNER_SYNTHESIZER": str(self.planner_synthesizer or "claude"),
             "AUTOCODER_PLANNER_TIMEOUT_S": str(int(self.planner_timeout_s or 180)),

@@ -121,12 +121,6 @@ def get_project_stats(project_dir: Path) -> ProjectStats:
     )
 
 
-_SPEC_TEMPLATE_MARKERS = (
-    "YOUR_PROJECT_NAME",
-    "Replace with your actual project specification",
-    "Describe your project in 2-3 sentences",
-)
-
 _RUNTIME_ARTIFACTS = {
     ".autocoder",
     "worktrees",
@@ -226,13 +220,6 @@ def _collect_non_runtime_entries(project_dir: Path, max_items: int = 12) -> tupl
     return entries, total, truncated
 
 
-def _is_spec_placeholder(spec_content: str) -> bool:
-    """Detect if the spec is still the scaffold template."""
-    if not spec_content:
-        return True
-    return any(marker in spec_content for marker in _SPEC_TEMPLATE_MARKERS)
-
-
 def _is_setup_required(project_dir: Path, has_spec: bool) -> bool:
     """Determine whether the project still needs spec setup."""
     if not has_spec:
@@ -250,8 +237,9 @@ def _is_setup_required(project_dir: Path, has_spec: bool) -> bool:
         content = spec_path.read_text(encoding="utf-8")
     except Exception:
         return True
+    from autocoder.core.spec_validation import is_app_spec_text_real
 
-    return _is_spec_placeholder(content)
+    return not is_app_spec_text_real(content)
 
 
 @router.get("", response_model=list[ProjectSummary])

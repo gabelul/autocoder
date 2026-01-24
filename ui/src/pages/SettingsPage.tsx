@@ -12,9 +12,11 @@ import { EngineSettingsContent } from '../components/EngineSettingsContent'
 import { AdvancedSettingsContent } from '../components/AdvancedSettingsContent'
 import { MultiModelGeneratePanel } from '../components/MultiModelGeneratePanel'
 import { GsdToSpecPanel } from '../components/GsdToSpecPanel'
+import { RepoMapPanel } from '../components/RepoMapPanel'
 import { ProjectConfigEditor } from '../components/ProjectConfigEditor'
 import { ProjectMaintenance } from '../components/ProjectMaintenance'
 import { DiagnosticsContent } from '../components/DiagnosticsContent'
+import { useProjectRuntimeSettings, useUpdateProjectRuntimeSettings } from '../hooks/useProjects'
 import type { RunSettings } from '../components/SettingsModal'
 import type { ProjectSummary } from '../lib/types'
 
@@ -48,6 +50,9 @@ export function SettingsPage({
 
   const canUseParallel = !yoloEnabled
   const projectTabsEnabled = Boolean(projectName)
+  const runtimeSettingsQ = useProjectRuntimeSettings(projectName)
+  const updateRuntimeSettings = useUpdateProjectRuntimeSettings(projectName ?? '')
+  const runtimeSettings = runtimeSettingsQ.data ?? null
 
   const projectOptions = useMemo(() => {
     return [...projects].sort((a, b) => a.name.localeCompare(b.name))
@@ -262,6 +267,86 @@ export function SettingsPage({
               </div>
             </div>
           )}
+
+          {projectName && runtimeSettings && (
+            <div className="neo-card p-4 mt-6">
+              <div className="font-display font-bold uppercase mb-2">Project Runtime</div>
+              <div className="text-sm text-[var(--color-neo-text-secondary)] mb-4">
+                Stored per project (applies on next start).
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <label className="neo-card p-3 flex items-start justify-between gap-3 cursor-pointer">
+                  <div>
+                    <div className="font-display font-bold text-sm uppercase">Planner required (smart)</div>
+                    <div className="text-xs text-[var(--color-neo-text-secondary)]">
+                      Ensures risky features get a plan artifact first (fail-open).
+                    </div>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={Boolean(runtimeSettings.planner_required)}
+                    onChange={(e) => {
+                      const next = Boolean(e.target.checked)
+                      updateRuntimeSettings.mutate({
+                        ...runtimeSettings,
+                        planner_required: next,
+                        planner_enabled: next,
+                      })
+                    }}
+                    className="w-5 h-5 mt-1"
+                  />
+                </label>
+
+                <label className="neo-card p-3 flex items-start justify-between gap-3 cursor-pointer">
+                  <div>
+                    <div className="font-display font-bold text-sm uppercase">Stop when done</div>
+                    <div className="text-xs text-[var(--color-neo-text-secondary)]">
+                      Stops the agent when the queue is empty.
+                    </div>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={Boolean(runtimeSettings.stop_when_done)}
+                    onChange={(e) =>
+                      updateRuntimeSettings.mutate({
+                        ...runtimeSettings,
+                        stop_when_done: Boolean(e.target.checked),
+                      })
+                    }
+                    className="w-5 h-5 mt-1"
+                  />
+                </label>
+
+                <label className="neo-card p-3 flex items-start justify-between gap-3 cursor-pointer">
+                  <div>
+                    <div className="font-display font-bold text-sm uppercase">Require Gatekeeper</div>
+                    <div className="text-xs text-[var(--color-neo-text-secondary)]">
+                      Requires deterministic verification before merge.
+                    </div>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={Boolean(runtimeSettings.require_gatekeeper)}
+                    onChange={(e) =>
+                      updateRuntimeSettings.mutate({
+                        ...runtimeSettings,
+                        require_gatekeeper: Boolean(e.target.checked),
+                      })
+                    }
+                    className="w-5 h-5 mt-1"
+                  />
+                </label>
+              </div>
+
+              {(runtimeSettingsQ.isLoading || updateRuntimeSettings.isPending) && (
+                <div className="text-xs text-[var(--color-neo-text-secondary)] mt-3">Saving…</div>
+              )}
+              {updateRuntimeSettings.isError && (
+                <div className="text-xs text-[var(--color-neo-danger)] mt-3">Failed to save project settings.</div>
+              )}
+            </div>
+          )}
         </div>
       ) : tab === 'models' ? (
         projectName ? (
@@ -296,6 +381,7 @@ export function SettingsPage({
       ) : tab === 'generate' ? (
         projectName ? (
           <div className="space-y-6">
+            <RepoMapPanel projectName={projectName} />
             <GsdToSpecPanel projectName={projectName} />
             <MultiModelGeneratePanel projectName={projectName} />
           </div>

@@ -23,6 +23,7 @@ import os
 import sys
 import logging
 import subprocess
+import shutil
 import json
 import psutil
 import threading
@@ -384,6 +385,8 @@ class Orchestrator:
         self._last_logs_prune_at: Optional[datetime] = None
         self._last_dependency_check_at: Optional[datetime] = None
         self._last_regression_spawn_at: Optional[datetime] = None
+        self._planner_breaker_failures: int = 0
+        self._planner_breaker_open_until: datetime | None = None
 
         # Apply model preset override (workers may pass 'custom' to use persisted available_models).
         self.model_preset = model_preset
@@ -991,10 +994,9 @@ class Orchestrator:
                 continue
 
             plan_path = None
-            with contextlib.suppress(Exception):
-                plan_path = self._maybe_generate_feature_plan(
-                    feature=claimed_feature, worktree_path=Path(worktree_info["worktree_path"])
-                )
+            plan_path = self._ensure_feature_plan(
+                feature=claimed_feature, worktree_path=Path(worktree_info["worktree_path"])
+            )
 
             # Spawn actual worker process.
             #
@@ -1177,18 +1179,89 @@ class Orchestrator:
 
         return spawned_agents
 
-    def _maybe_generate_feature_plan(self, *, feature: dict, worktree_path: Path) -> str | None:
+    def _ensure_feature_plan(self, *, feature: dict, worktree_path: Path) -> str | None:
         """
-        Optionally generate a per-feature plan artifact and return its path.
+        Generate (or ensure) a per-feature plan artifact and return its path.
+
+        Behavior:
+        - If planner is disabled and planner-required is off -> returns None.
+        - If planner is enabled -> best-effort generate a plan. Failures are allowed.
+        - If planner-required is enabled and the feature is deemed "risky" -> ensure a plan exists.
+          This is fail-open: if planning cannot run, we write a deterministic fallback plan (or proceed without).
+        """
+        feature_id = int(feature.get("id") or 0)
+        if feature_id <= 0:
+            return None
+
+        worktree_path = Path(worktree_path).resolve()
+        out_path = (worktree_path / ".autocoder" / "feature_plan.md").resolve()
+
+        required_for_feature = self._planner_required_for_feature(feature)
+        planner_wanted = self._planner_enabled() or required_for_feature
+        if not planner_wanted:
+            return None
+
+        # If breaker is open, skip planning attempts; for required features we may still write a fallback.
+        plan_error = ""
+        plan_path: str | None = None
+
+        if not self._planner_breaker_is_open():
+            cfg, can_run, reason = self._planner_build_plan_cfg()
+            if not can_run:
+                plan_error = reason
+            else:
+                try:
+                    plan_path = self._generate_feature_plan(feature=feature, worktree_path=worktree_path, cfg=cfg)
+                    self._planner_breaker_record_success()
+                    return plan_path
+                except Exception as e:
+                    plan_error = str(e)
+                    self._planner_breaker_record_failure()
+        else:
+            with contextlib.suppress(Exception):
+                until = self._planner_breaker_open_until.isoformat() if self._planner_breaker_open_until else ""
+                plan_error = f"planner circuit breaker open{(' until ' + until) if until else ''}"
+
+        # If a plan file already exists (from a previous attempt), reuse it for required features.
+        if required_for_feature:
+            with contextlib.suppress(Exception):
+                if out_path.exists() and out_path.is_file():
+                    existing = out_path.read_text(encoding="utf-8", errors="replace")
+                    if self._planner_plan_text_is_valid(existing):
+                        return str(out_path)
+
+        if not required_for_feature:
+            return None
+
+        # Required: write a deterministic fallback plan so workers still get a structured checklist.
+        fallback = self._write_fallback_feature_plan(
+            feature=feature,
+            worktree_path=worktree_path,
+            reason=(plan_error or "planner unavailable"),
+        )
+        if fallback:
+            with contextlib.suppress(Exception):
+                self.database.add_activity_event(
+                    event_type="planner.fallback",
+                    level="WARNING",
+                    message=f"Planner unavailable; using fallback plan for feature #{feature_id}",
+                    feature_id=int(feature_id),
+                    data={"error": (plan_error or "").strip()[:2000]},
+                )
+            return fallback
+
+        return None
+
+    def _generate_feature_plan(self, *, feature: dict, worktree_path: Path, cfg: MultiModelGenerateConfig) -> str:
+        """
+        Generate a per-feature plan artifact and return its path.
 
         The plan is written into the agent worktree under `.autocoder/feature_plan.md` so the worker
         can read it without accessing paths outside its worktree sandbox.
         """
-        if not self._planner_enabled():
-            return None
         feature_id = int(feature.get("id") or 0)
         if feature_id <= 0:
-            return None
+            raise ValueError("feature_id missing")
 
         out_path = (Path(worktree_path) / ".autocoder" / "feature_plan.md").resolve()
         out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1217,30 +1290,41 @@ class Orchestrator:
             "- Do not invent dependencies that aren't in the repo.\n"
         )
 
-        cfg = MultiModelGenerateConfig(
-            agents=[a for a in self._planner_agents() if a in {"codex", "gemini"}],  # type: ignore[list-item]
-            synthesizer=self._planner_synthesizer(),  # type: ignore[arg-type]
-            timeout_s=self._planner_timeout_s(),
-            codex_model=str(os.environ.get("AUTOCODER_CODEX_MODEL", "")).strip(),
-            codex_reasoning_effort=str(os.environ.get("AUTOCODER_CODEX_REASONING_EFFORT", "")).strip(),
-            gemini_model=str(os.environ.get("AUTOCODER_GEMINI_MODEL", "")).strip(),
-            claude_model=self._planner_model(),
+        generate_multi_model_artifact(
+            project_dir=worktree_path,
+            kind="plan",
+            user_prompt=prompt,
+            cfg=cfg,
+            output_path=out_path,
+            drafts_root=drafts_root,
+            synthesize=True,
         )
 
-        try:
-            generate_multi_model_artifact(
-                project_dir=worktree_path,
-                kind="plan",
-                user_prompt=prompt,
-                cfg=cfg,
-                output_path=out_path,
-                drafts_root=drafts_root,
-                synthesize=True,
-            )
-            return str(out_path)
-        except Exception as e:
-            logger.warning(f"Planner failed for feature #{feature_id}: {e}")
-            return None
+        text = out_path.read_text(encoding="utf-8", errors="replace") if out_path.exists() else ""
+        if not self._planner_plan_text_is_valid(text):
+            raise ValueError("planner produced invalid plan")
+        return str(out_path)
+
+    @staticmethod
+    def _planner_plan_text_is_valid(text: str) -> bool:
+        """
+        Best-effort validation for the plan artifact.
+
+        When multi-model generation cannot run (no drafts + no Claude synthesis), it can fall back to
+        writing the synthesis prompt itself (e.g., starting with "You are synthesizing..."). Treat
+        that as invalid so planner-required can safely fall back to a deterministic plan.
+        """
+        stripped = (text or "").strip()
+        if not stripped:
+            return False
+
+        lowered = stripped.lower()
+        if lowered.startswith("you are synthesizing multiple drafts into one final artifact"):
+            return False
+        if "drafts:" in lowered and "user request:" in lowered and "you are synthesizing multiple drafts" in lowered:
+            return False
+
+        return True
 
     @staticmethod
     def _env_truthy(name: str) -> bool:
@@ -1275,6 +1359,245 @@ class Orchestrator:
 
     def _planner_enabled(self) -> bool:
         return self._env_truthy("AUTOCODER_PLANNER_ENABLED")
+
+    def _planner_required_enabled(self) -> bool:
+        return self._env_truthy("AUTOCODER_PLANNER_REQUIRED")
+
+    def _planner_required_mode(self) -> str:
+        raw = str(os.environ.get("AUTOCODER_PLANNER_REQUIRED_MODE", "")).strip().lower()
+        if raw in {"always", "smart"}:
+            return raw
+        return "smart"
+
+    def _planner_required_after_attempts(self) -> int:
+        raw = str(os.environ.get("AUTOCODER_PLANNER_REQUIRED_AFTER_ATTEMPTS", "")).strip()
+        try:
+            v = int(raw) if raw else 1
+        except Exception:
+            v = 1
+        return max(0, min(1000, v))
+
+    def _planner_required_min_steps(self) -> int:
+        raw = str(os.environ.get("AUTOCODER_PLANNER_REQUIRED_MIN_STEPS", "")).strip()
+        try:
+            v = int(raw) if raw else 8
+        except Exception:
+            v = 8
+        return max(1, min(1000, v))
+
+    def _planner_required_categories(self) -> set[str]:
+        raw = str(os.environ.get("AUTOCODER_PLANNER_REQUIRED_CATEGORIES", "")).strip()
+        if not raw:
+            raw = "backend,infra"
+        parts = [p.strip().lower() for p in raw.replace(";", ",").split(",")]
+        return {p for p in parts if p}
+
+    def _planner_required_keywords(self) -> set[str]:
+        raw = str(os.environ.get("AUTOCODER_PLANNER_REQUIRED_KEYWORDS", "")).strip()
+        if not raw:
+            raw = "auth,oauth,permission,role,rbac,migration,schema,sql,deploy,docker,kubernetes,security,payment,billing"
+        parts = [p.strip().lower() for p in raw.replace(";", ",").split(",")]
+        return {p for p in parts if p}
+
+    def _planner_required_for_feature(self, feature: dict) -> bool:
+        if not self._planner_required_enabled():
+            return False
+
+        mode = self._planner_required_mode()
+        if mode == "always":
+            return True
+
+        attempts = 0
+        with contextlib.suppress(Exception):
+            attempts = int(feature.get("attempts") or 0)
+        if attempts >= self._planner_required_after_attempts() and attempts > 0:
+            return True
+
+        category = str(feature.get("category") or "").strip().lower()
+        if category and category in self._planner_required_categories():
+            return True
+
+        steps = feature.get("steps") or []
+        step_count = 0
+        if isinstance(steps, list):
+            step_count = len([s for s in steps if str(s).strip()])
+        elif isinstance(steps, str) and steps.strip():
+            step_count = len([line for line in steps.splitlines() if line.strip()])
+        if step_count >= self._planner_required_min_steps():
+            return True
+
+        combined = f"{feature.get('name') or ''} {feature.get('description') or ''}".lower()
+        if any(k in combined for k in self._planner_required_keywords()):
+            return True
+
+        return False
+
+    def _planner_has_claude_credentials(self) -> bool:
+        if os.environ.get("ANTHROPIC_AUTH_TOKEN") or os.environ.get("ANTHROPIC_API_KEY"):
+            return True
+        credentials_path = Path.home() / ".claude" / ".credentials.json"
+        return credentials_path.exists()
+
+    def _planner_build_plan_cfg(self) -> tuple[MultiModelGenerateConfig, bool, str]:
+        """
+        Build a planner config and report whether it can run with current environment.
+
+        This applies a small amount of fail-safe fallback so a strict synthesizer choice
+        doesn't break planning unnecessarily (e.g., Claude synth requested but no Claude creds,
+        yet Codex/Gemini drafts are available -> fall back to `none`).
+        """
+        requested_agents = [a for a in self._planner_agents() if a in {"codex", "gemini"}]
+        has_codex = shutil.which("codex") is not None
+        has_gemini = shutil.which("gemini") is not None
+        has_codex_draft = has_codex and ("codex" in requested_agents)
+        has_gemini_draft = has_gemini and ("gemini" in requested_agents)
+        has_drafts = has_codex_draft or has_gemini_draft
+        claude_ok = self._planner_has_claude_credentials()
+
+        desired = self._planner_synthesizer()
+        effective = desired
+
+        if desired == "claude" and not claude_ok and has_drafts:
+            # Claude synth not available, but drafts are -> keep first draft.
+            effective = "none"
+        elif desired == "codex" and not has_codex and has_gemini:
+            effective = "gemini"
+            if "gemini" not in requested_agents:
+                requested_agents.append("gemini")
+                has_gemini_draft = True
+                has_drafts = has_codex_draft or has_gemini_draft
+        elif desired == "gemini" and not has_gemini and has_codex:
+            effective = "codex"
+            if "codex" not in requested_agents:
+                requested_agents.append("codex")
+                has_codex_draft = True
+                has_drafts = has_codex_draft or has_gemini_draft
+        elif desired in {"codex", "gemini"} and not (has_codex or has_gemini) and claude_ok:
+            # CLI synth requested but no CLIs; fall back to Claude synth if available.
+            effective = "claude"
+        elif desired == "none" and not has_drafts and claude_ok:
+            # No drafts to pick from; use Claude synth to produce a plan.
+            effective = "claude"
+
+        can_run = False
+        reason = ""
+        if effective == "claude":
+            can_run = claude_ok
+            reason = "claude credentials not found" if not claude_ok else ""
+        elif effective == "codex":
+            can_run = has_drafts and has_codex
+            if not has_codex:
+                reason = "codex CLI not found"
+            elif not has_drafts:
+                reason = "no draft CLIs available (codex/gemini)"
+        elif effective == "gemini":
+            can_run = has_drafts and has_gemini
+            if not has_gemini:
+                reason = "gemini CLI not found"
+            elif not has_drafts:
+                reason = "no draft CLIs available (codex/gemini)"
+        else:
+            can_run = has_drafts
+            reason = "no draft CLIs available (codex/gemini)" if not has_drafts else ""
+
+        cfg = MultiModelGenerateConfig(
+            agents=requested_agents,  # type: ignore[arg-type]
+            synthesizer=effective,  # type: ignore[arg-type]
+            timeout_s=self._planner_timeout_s(),
+            codex_model=str(os.environ.get("AUTOCODER_CODEX_MODEL", "")).strip(),
+            codex_reasoning_effort=str(os.environ.get("AUTOCODER_CODEX_REASONING_EFFORT", "")).strip(),
+            gemini_model=str(os.environ.get("AUTOCODER_GEMINI_MODEL", "")).strip(),
+            claude_model=self._planner_model(),
+        )
+        return cfg, can_run, reason
+
+    def _planner_breaker_threshold(self) -> int:
+        raw = str(os.environ.get("AUTOCODER_PLANNER_BREAKER_THRESHOLD", "")).strip()
+        try:
+            v = int(raw) if raw else 3
+        except Exception:
+            v = 3
+        return max(0, min(1000, v))
+
+    def _planner_breaker_cooldown_s(self) -> int:
+        raw = str(os.environ.get("AUTOCODER_PLANNER_BREAKER_COOLDOWN_S", "")).strip()
+        try:
+            v = int(raw) if raw else 600
+        except Exception:
+            v = 600
+        return max(1, min(3600 * 24, v))
+
+    def _planner_breaker_is_open(self) -> bool:
+        if not self._planner_breaker_open_until:
+            return False
+        return datetime.now(timezone.utc) < self._planner_breaker_open_until
+
+    def _planner_breaker_record_success(self) -> None:
+        self._planner_breaker_failures = 0
+        self._planner_breaker_open_until = None
+
+    def _planner_breaker_record_failure(self) -> None:
+        threshold = self._planner_breaker_threshold()
+        if threshold <= 0:
+            return
+        self._planner_breaker_failures = int(self._planner_breaker_failures or 0) + 1
+        if self._planner_breaker_failures >= threshold:
+            cooldown = self._planner_breaker_cooldown_s()
+            self._planner_breaker_open_until = datetime.now(timezone.utc) + timedelta(seconds=cooldown)
+            self._planner_breaker_failures = 0
+
+    def _write_fallback_feature_plan(self, *, feature: dict, worktree_path: Path, reason: str) -> str | None:
+        feature_id = int(feature.get("id") or 0)
+        if feature_id <= 0:
+            return None
+
+        out_path = (Path(worktree_path) / ".autocoder" / "feature_plan.md").resolve()
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+
+        name = str(feature.get("name") or "").strip()
+        desc = str(feature.get("description") or "").strip()
+        category = str(feature.get("category") or "").strip()
+
+        steps = feature.get("steps") or []
+        if isinstance(steps, list):
+            steps_lines = [f"- {str(s).strip()}" for s in steps if str(s).strip()]
+        elif isinstance(steps, str) and steps.strip():
+            steps_lines = [f"- {line.strip(' -')}" for line in steps.splitlines() if line.strip()]
+        else:
+            steps_lines = []
+
+        verify_lines: list[str] = []
+        with contextlib.suppress(Exception):
+            cfg = load_project_config(self.project_dir)
+            for key, spec in (cfg.commands or {}).items():
+                if not spec or not getattr(spec, "command", None):
+                    continue
+                verify_lines.append(f"- {key}: {spec.command}")
+        if not verify_lines:
+            verify_lines.append("- Run the project verification commands (tests/lint/typecheck) and ensure Gatekeeper passes.")
+
+        text = (
+            "# Feature plan (fallback)\n\n"
+            f"Feature #{feature_id}: {name}\n"
+            + (f"Category: {category}\n" if category else "")
+            + "\n"
+            "## Goal\n"
+            + (desc + "\n\n" if desc else "(missing description)\n\n")
+            + "## Steps\n"
+            + ("\n".join(steps_lines) + "\n\n" if steps_lines else "(no steps provided)\n\n")
+            + "## Verify\n"
+            + "\n".join(verify_lines)
+            + "\n\n"
+            + "## Notes\n"
+            + "This plan was generated as a safe fallback because the planner could not run.\n"
+            + f"Reason: {reason.strip()}\n"
+        )
+
+        try:
+            out_path.write_text(text, encoding="utf-8")
+            return str(out_path)
+        except Exception:
+            return None
 
     def _planner_timeout_s(self) -> int:
         raw = str(os.environ.get("AUTOCODER_PLANNER_TIMEOUT_S", "")).strip()
