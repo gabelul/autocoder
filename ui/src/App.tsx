@@ -724,7 +724,7 @@ function App() {
 
       {/* Main Content */}
       <main
-        className="max-w-7xl mx-auto px-4 py-8"
+        className="max-w-screen-2xl mx-auto px-4 py-8"
         style={{ paddingBottom: debugOpen ? debugPanelHeight + 32 : undefined }}
       >
         {route === 'settings' ? (
@@ -836,6 +836,16 @@ function App() {
               />
             ) : (
               <>
+                {/* Kanban Board (primary) */}
+                <KanbanBoard
+                  features={features}
+                  onFeatureClick={setSelectedFeature}
+                />
+
+                {selectedProject && features && (features.staged?.length ?? 0) > 0 && (
+                  <StagedBacklogPanel projectName={selectedProject} stagedCount={features.staged.length} />
+                )}
+
                 {/* Progress Dashboard */}
                 <ProgressDashboard
                   passing={progress.passing}
@@ -869,18 +879,6 @@ function App() {
                 {/* Agent Thought - shows latest agent narrative */}
                 <AgentThought logs={wsState.logs} agentStatus={wsState.agentStatus} />
               </>
-            )}
-
-            {selectedProject && features && (features.staged?.length ?? 0) > 0 && (
-              <StagedBacklogPanel projectName={selectedProject} stagedCount={features.staged.length} />
-            )}
-
-            {/* Kanban Board */}
-            {!isInitializingFeatures && !isInitializingFeaturesCrashed && (
-              <KanbanBoard
-                features={features}
-                onFeatureClick={setSelectedFeature}
-              />
             )}
           </div>
         )}
