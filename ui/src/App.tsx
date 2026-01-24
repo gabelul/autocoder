@@ -857,31 +857,28 @@ function App() {
                   featureCounts={featureCounts}
                 />
 
-                <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_380px] gap-6 items-start">
-                  <div className="min-w-0">
-                    {/* Kanban Board (primary) */}
-                    <div className="min-h-[520px] xl:h-[calc(100vh-280px)]">
-                      <KanbanBoard
-                        className="xl:h-full"
-                        features={features}
-                        onFeatureClick={setSelectedFeature}
-                      />
-                    </div>
-                  </div>
-
-                  {selectedProject ? (
-                    <div className="neo-card p-4 flex flex-col min-h-[520px] xl:min-h-0 xl:h-[calc(100vh-280px)] xl:sticky xl:top-24">
-                      <ActivityFeedPanel
-                        projectName={selectedProject}
-                        dense
-                        onOpenFull={() => {
-                          setLogsTab('activity')
-                          setDebugOpen(true)
-                        }}
-                      />
-                    </div>
-                  ) : null}
+                {/* Kanban Board (primary) */}
+                <div className="min-h-[520px] xl:h-[calc(100dvh-460px)]">
+                  <KanbanBoard
+                    className="xl:h-full"
+                    features={features}
+                    onFeatureClick={setSelectedFeature}
+                  />
                 </div>
+
+                {/* Mission Control (secondary, always visible) */}
+                {selectedProject ? (
+                  <div className="neo-card p-4 h-[240px] sm:h-[280px] lg:h-[320px]">
+                    <ActivityFeedPanel
+                      projectName={selectedProject}
+                      dense
+                      onOpenFull={() => {
+                        setLogsTab('activity')
+                        setDebugOpen(true)
+                      }}
+                    />
+                  </div>
+                ) : null}
 
                 <details className="neo-card p-4">
                   <summary className="cursor-pointer select-none font-display font-bold uppercase tracking-wide">
