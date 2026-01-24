@@ -34,6 +34,16 @@ export function FeatureCard({ feature, onClick, isInProgress }: FeatureCardProps
   const attempts = feature.attempts ?? 0
   const isBlocked = status === 'BLOCKED'
   const isStaged = feature.staged || (status === 'PENDING' && feature.enabled === false)
+  const isPending = !isBlocked && !isInProgress && !feature.passes && !isStaged
+  const hasError = Boolean(feature.last_error) || attempts > 0
+  const isWaiting = isPending && feature.ready === false
+
+  const errorPreview = (() => {
+    const raw = (feature.last_error || '').replace(/\r\n/g, '\n').trim()
+    if (!raw) return ''
+    const firstLine = raw.split('\n')[0] || ''
+    return firstLine.length > 90 ? `${firstLine.slice(0, 90).trimEnd()}…` : firstLine
+  })()
 
   return (
     <button
@@ -92,7 +102,17 @@ export function FeatureCard({ feature, onClick, isInProgress }: FeatureCardProps
             <PauseCircle size={16} className="text-[var(--color-neo-text-muted)]" />
             <span className="text-[var(--color-neo-text-muted)] font-bold">Staged</span>
           </>
-        ) : (
+        ) : hasError ? (
+          <>
+            <AlertCircle size={16} className="text-[var(--color-neo-pending)]" />
+            <span className="text-[var(--color-neo-pending)] font-bold">
+              {isWaiting ? 'Waiting' : 'Retrying'}
+            </span>
+            {attempts > 0 && (
+              <span className="font-mono text-xs text-neo-text-secondary">({attempts})</span>
+            )}
+          </>
+          ) : (
           <>
             <Circle size={16} className="text-neo-text-secondary" />
             <span className="text-neo-text-secondary">Pending</span>
@@ -102,6 +122,12 @@ export function FeatureCard({ feature, onClick, isInProgress }: FeatureCardProps
           </>
         )}
       </div>
+
+      {isPending && errorPreview && (
+        <div className="mt-2 text-xs text-[var(--color-neo-text-secondary)] line-clamp-1" title={errorPreview}>
+          {errorPreview}
+        </div>
+      )}
     </button>
   )
 }
