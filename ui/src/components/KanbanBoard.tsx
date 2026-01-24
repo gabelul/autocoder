@@ -24,6 +24,26 @@ export function KanbanBoard({ features, onFeatureClick }: KanbanBoardProps) {
     )
   }
 
+  const sortPending = (items: Feature[]) => {
+    const score = (f: Feature) => {
+      const status = String(f.status || '').toUpperCase()
+      if (status === 'BLOCKED') return 3
+      if ((f.attempts ?? 0) > 0 || f.last_error) return 2
+      if (f.ready === false) return 1
+      return 0
+    }
+
+    return [...items].sort((a, b) => {
+      const sa = score(a)
+      const sb = score(b)
+      if (sb !== sa) return sb - sa
+      const pa = a.priority ?? 0
+      const pb = b.priority ?? 0
+      if (pb !== pa) return pb - pa
+      return (a.id ?? 0) - (b.id ?? 0)
+    })
+  }
+
   return (
     <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
       <KanbanColumn
@@ -36,7 +56,7 @@ export function KanbanBoard({ features, onFeatureClick }: KanbanBoardProps) {
       <KanbanColumn
         title="Pending"
         count={features.pending.length}
-        features={features.pending}
+        features={sortPending(features.pending)}
         color="pending"
         onFeatureClick={onFeatureClick}
       />
