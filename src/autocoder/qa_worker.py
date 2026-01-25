@@ -315,6 +315,27 @@ def _fix_prompt(*, repo: Path, project_dir: Path, failure: str, diff: str, attem
     return base
 
 
+def _fix_prompt_diff_only(*, repo: Path, project_dir: Path, failure: str, diff: str, attempt: int) -> str:
+    knowledge = build_knowledge_bundle(project_dir, max_total_chars=8000)
+    base = (
+        "You are a software engineer fixing a CI failure.\n"
+        "Output ONLY a git-apply-compatible UNIFIED DIFF.\n"
+        "Rules:\n"
+        "- Only fix the failing verification (tests/lint/typecheck). No new features.\n"
+        "- Keep the patch minimal.\n"
+        "- Do NOT output JSON, markdown fences, or explanations.\n"
+        "- Do NOT output '*** Begin Patch' or any other wrapper format.\n\n"
+        f"Attempt: {attempt}\n\n"
+        "Gatekeeper failure excerpt:\n"
+        + (failure.strip()[:50_000] if failure else "(missing)")
+        + "\n\n"
+        + (("Project knowledge files:\n" + knowledge + "\n\n") if knowledge else "")
+        + "Current diff from base to HEAD:\n"
+        + (diff.strip()[:200_000] if diff else "(empty diff)")
+    )
+    return base
+
+
 def _implement_prompt(
     *, repo: Path, project_dir: Path, feature: dict, files: list[str], hints: dict[str, str], diff: str, attempt: int
 ) -> str:
@@ -336,6 +357,43 @@ def _implement_prompt(
         "- The patch MUST start with 'diff --git a/... b/...'.\n"
         "- Do NOT output '*** Begin Patch' or any other wrapper format.\n"
         "- Output JSON only (no markdown, no explanation).\n\n"
+        f"Attempt: {attempt}\n\n"
+        "Feature:\n"
+        f"- Name: {name}\n"
+        + (f"- Category: {category}\n" if category else "")
+        + (f"- Description: {desc}\n" if desc else "")
+        + ("- Steps:\n" + steps_text + "\n" if steps_text else "")
+        + (f"\nFeature plan (generated):\n{plan_text}\n" if plan_text else "")
+        + "\n"
+        "Repository file list (partial):\n"
+        + ("\n".join(files) if files else "(unable to list files)")
+        + "\n\n"
+        + (("Project knowledge files:\n" + knowledge + "\n\n") if knowledge else "")
+        + (hint_block + "\n\n" if hint_block else "")
+        + "Current diff from base to HEAD:\n"
+        + (diff.strip()[:200_000] if diff else "(empty diff)")
+    )
+
+
+def _implement_prompt_diff_only(
+    *, repo: Path, project_dir: Path, feature: dict, files: list[str], hints: dict[str, str], diff: str, attempt: int
+) -> str:
+    name = str(feature.get("name") or "").strip()
+    desc = str(feature.get("description") or "").strip()
+    category = str(feature.get("category") or "").strip()
+    steps_text = _feature_steps_text(feature)
+    plan_text = _read_feature_plan(repo)
+    hint_block = "\n\n".join(f"{k}:\n{v}" for k, v in hints.items() if v.strip())
+    knowledge = build_knowledge_bundle(project_dir, max_total_chars=8000)
+
+    return (
+        "You are a software engineer implementing a feature.\n"
+        "Output ONLY a git-apply-compatible UNIFIED DIFF.\n"
+        "Rules:\n"
+        "- Implement ONLY this feature. Avoid unrelated refactors.\n"
+        "- Keep changes minimal but complete.\n"
+        "- Do NOT output JSON, markdown fences, or explanations.\n"
+        "- Do NOT output '*** Begin Patch' or any other wrapper format.\n\n"
         f"Attempt: {attempt}\n\n"
         "Feature:\n"
         f"- Name: {name}\n"
@@ -529,8 +587,7 @@ async def _run_claude_patch(repo: Path, *, prompt: str, timeout_s: int) -> tuple
         or "sonnet"
     ).strip()
 
-    # Read-only settings file (no writes).
-    settings_file = repo / ".claude_settings.patch.json"
+    # Read-only settings file (no writes). Use a temp file so it never gets committed by the worker.
     security_settings = {
         "sandbox": {"enabled": True, "autoAllowBashIfSandboxed": True},
         "permissions": {
@@ -542,7 +599,9 @@ async def _run_claude_patch(repo: Path, *, prompt: str, timeout_s: int) -> tuple
             ],
         },
     }
-    settings_file.write_text(json.dumps(security_settings, indent=2), encoding="utf-8")
+    fd, settings_path = tempfile.mkstemp(prefix="autocoder-claude-patch-", suffix=".json")
+    os.close(fd)
+    Path(settings_path).write_text(json.dumps(security_settings, indent=2), encoding="utf-8")
 
     client = ClaudeSDKClient(
         options=ClaudeAgentOptions(
@@ -551,34 +610,54 @@ async def _run_claude_patch(repo: Path, *, prompt: str, timeout_s: int) -> tuple
             allowed_tools=["Read", "Glob", "Grep"],
             system_prompt=(
                 "You are generating a unified diff patch.\n"
-                "Output ONLY the unified diff starting with 'diff --git'.\n"
-                "No explanations, no markdown fences."
+                "Output ONLY a git-apply-compatible unified diff.\n"
+                "No explanations, no markdown fences, no JSON.\n"
+                "Do not use the AutoCoder '*** Begin Patch' format."
             ),
             cwd=str(repo),
-            settings=str(settings_file),
-            max_turns=2,
+            settings=str(settings_path),
+            max_turns=4,
             setting_sources=["project"],
         )
     )
 
-    async def _collect() -> str:
-        async with client:
-            await client.query(prompt)
-            text = ""
-            async for msg in client.receive_response():
-                if type(msg).__name__ == "AssistantMessage" and hasattr(msg, "content"):
-                    for block in msg.content:
-                        if type(block).__name__ == "TextBlock" and hasattr(block, "text"):
-                            text += block.text
-            return text
+    async def _collect_one(query: str) -> str:
+        await client.query(query)
+        text = ""
+        async for msg in client.receive_response():
+            if type(msg).__name__ == "AssistantMessage" and hasattr(msg, "content"):
+                for block in msg.content:
+                    if type(block).__name__ == "TextBlock" and hasattr(block, "text"):
+                        text += block.text
+        return text
 
     try:
-        text = await asyncio.wait_for(_collect(), timeout=timeout_s)
-        return True, text, ""
+        async with client:
+            text = await asyncio.wait_for(_collect_one(prompt), timeout=timeout_s)
+            candidate = _strip_fences(text)
+            candidate = _trim_to_diff_start(candidate)
+            if not _looks_like_unified_diff(candidate):
+                retry_prompt = (
+                    "Your previous response was not a patch.\n"
+                    "Output ONLY a unified diff that `git apply` can apply.\n"
+                    "Start with `diff --git` when possible; otherwise include `--- a/...` and `+++ b/...` with hunks.\n"
+                    "No explanations.\n"
+                )
+                text2 = await asyncio.wait_for(_collect_one(retry_prompt), timeout=timeout_s)
+                candidate = _trim_to_diff_start(_strip_fences(text2))
+
+            if not _looks_like_unified_diff(candidate):
+                preview = (candidate.strip().splitlines()[0] if candidate.strip() else "(empty)").strip()
+                return False, "", f"claude_patch returned non-diff output: {preview[:200]}"
+
+            return True, candidate, ""
     except asyncio.TimeoutError:
         return False, "", "claude patch timed out"
     except Exception as e:
         return False, "", str(e)
+    finally:
+        with contextlib.suppress(Exception):
+            os.unlink(settings_path)
 
 
 async def main() -> int:
@@ -631,20 +710,44 @@ async def main() -> int:
                 logger.info(f"Attempt {attempt}: engine={p}")
                 try:
                     if mode == "implement":
-                        prompt = _implement_prompt(
-                            repo=repo,
-                            project_dir=project_dir,
-                            feature=feature,
-                            files=files,
-                            hints=hints,
-                            diff=diff,
-                            attempt=attempt,
-                        )
+                        if p == "claude_patch":
+                            prompt = _implement_prompt_diff_only(
+                                repo=repo,
+                                project_dir=project_dir,
+                                feature=feature,
+                                files=files,
+                                hints=hints,
+                                diff=diff,
+                                attempt=attempt,
+                            )
+                        else:
+                            prompt = _implement_prompt(
+                                repo=repo,
+                                project_dir=project_dir,
+                                feature=feature,
+                                files=files,
+                                hints=hints,
+                                diff=diff,
+                                attempt=attempt,
+                            )
                     else:
                         failure_blob = failure + ("\n" + last_err if last_err else "")
-                        prompt = _fix_prompt(
-                            repo=repo, project_dir=project_dir, failure=failure_blob, diff=diff, attempt=attempt
-                        )
+                        if p == "claude_patch":
+                            prompt = _fix_prompt_diff_only(
+                                repo=repo,
+                                project_dir=project_dir,
+                                failure=failure_blob,
+                                diff=diff,
+                                attempt=attempt,
+                            )
+                        else:
+                            prompt = _fix_prompt(
+                                repo=repo,
+                                project_dir=project_dir,
+                                failure=failure_blob,
+                                diff=diff,
+                                attempt=attempt,
+                            )
 
                     if p == "codex_cli":
                         ok, patch, err = _run_codex(repo, prompt=prompt, timeout_s=int(args.timeout_s))
