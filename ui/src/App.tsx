@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import {
   useProjects,
@@ -13,6 +13,7 @@ import { useProjectWebSocket } from './hooks/useWebSocket'
 import { useFeatureSound } from './hooks/useFeatureSound'
 import { useCelebration } from './hooks/useCelebration'
 import { useAdvancedSettings } from './hooks/useAdvancedSettings'
+import { useBlockersSummary } from './hooks/useBlockers'
 
 import { ProjectSelector } from './components/ProjectSelector'
 import { KanbanBoard } from './components/KanbanBoard'
@@ -38,9 +39,10 @@ import { ProjectSetupRequired } from './components/ProjectSetupRequired'
 import { SpecCreationChat } from './components/SpecCreationChat'
 import { KnowledgeFilesModal } from './components/KnowledgeFilesModal'
 import { ConfirmationDialog } from './components/ConfirmationDialog'
+import { ResolveBlockersModal } from './components/ResolveBlockersModal'
 import { Plus, FileText, Settings as SettingsIcon, Sparkles, BookOpen, ChevronDown, List, MessageCircle } from 'lucide-react'
 import type { Feature } from './lib/types'
-import { startAgent } from './lib/api'
+import { pauseAgent, resumeAgent, startAgent } from './lib/api'
 
 const STORAGE_KEY = 'autonomous-coder-selected-project'
 
@@ -75,6 +77,7 @@ function App() {
   const [specYoloSelected, setSpecYoloSelected] = useState(false)
   const [runStartError, setRunStartError] = useState<string | null>(null)
   const [showKnowledgeModal, setShowKnowledgeModal] = useState(false)
+  const [showResolveBlockers, setShowResolveBlockers] = useState(false)
   const [setupBannerDismissedUntil, setSetupBannerDismissedUntil] = useState<number | null>(null)
   const [toolsOpen, setToolsOpen] = useState(false)
   const [showProjectSwitchConfirm, setShowProjectSwitchConfirm] = useState(false)
@@ -434,6 +437,16 @@ function App() {
         blocked: features.pending.filter((f) => String(f.status || '').toUpperCase() === 'BLOCKED').length,
       }
     : undefined
+
+  const claimableNow = useMemo(() => {
+    const items = features?.pending ?? []
+    return items.filter((f) => String(f.status || '').toUpperCase() === 'PENDING' && f.ready === true).length
+  }, [features])
+
+  const blockedNow = featureCounts?.blocked ?? 0
+  const isStalledOnBlockers = Boolean(features && (features.in_progress?.length ?? 0) === 0 && claimableNow === 0 && blockedNow > 0)
+
+  const blockersSummaryQuery = useBlockersSummary(selectedProject || '')
 
   const persistRunDefaults = (nextYoloEnabled: boolean, nextRunSettings: RunSettings) => {
     if (!selectedProject) return
@@ -857,6 +870,44 @@ function App() {
                   featureCounts={featureCounts}
                 />
 
+                {selectedProject && isStalledOnBlockers && (
+                  <div className="neo-card p-4 border-4 border-[var(--color-neo-danger)] bg-[var(--color-neo-card)]">
+                    <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+                      <div>
+                        <div className="font-display font-bold uppercase tracking-wide">Action required</div>
+                        <div className="text-sm text-[var(--color-neo-text-secondary)] mt-1">
+                          No claimable work right now because <span className="font-mono">{blockedNow}</span> feature(s) are blocked.
+                        </div>
+                        {blockersSummaryQuery.data?.groups?.[0] ? (
+                          <div className="text-xs text-[var(--color-neo-text-secondary)] mt-1">
+                            Top blocker: <span className="font-mono">{blockersSummaryQuery.data.groups[0].title}</span>
+                          </div>
+                        ) : null}
+                      </div>
+                      <div className="flex flex-wrap items-center gap-2 justify-end">
+                        <button
+                          className="neo-btn neo-btn-secondary text-sm"
+                          onClick={() => {
+                            setShowResolveBlockers(true)
+                          }}
+                        >
+                          Resolve blockers
+                        </button>
+                        <button
+                          className="neo-btn neo-btn-secondary text-sm"
+                          onClick={() => {
+                            setLogsTab('activity')
+                            setDebugOpen(true)
+                          }}
+                          title="Open Mission Control"
+                        >
+                          Mission Control
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
                 {/* Kanban Board (primary) */}
                 <div className="min-h-[520px] xl:h-[calc(100dvh-460px)]">
                   <KanbanBoard
@@ -989,6 +1040,41 @@ function App() {
           projectName={selectedProject}
           isOpen={showKnowledgeModal}
           onClose={() => setShowKnowledgeModal(false)}
+        />
+      )}
+
+      {selectedProject && (
+        <ResolveBlockersModal
+          projectName={selectedProject}
+          isOpen={showResolveBlockers}
+          isAgentRunning={wsState.agentStatus === 'running'}
+          maxImmediate={(agentStatusData?.parallel_mode ? (agentStatusData?.parallel_count ?? 3) * 2 : 2) || 2}
+          onClose={() => setShowResolveBlockers(false)}
+          onPause={async () => {
+            await pauseAgent(selectedProject)
+          }}
+          onResume={async () => {
+            await resumeAgent(selectedProject)
+          }}
+          onOpenLogs={() => {
+            setLogsTab('activity')
+            setDebugOpen(true)
+          }}
+          onOpenFeature={(id) => {
+            const all = [
+              ...(features?.staged ?? []),
+              ...(features?.pending ?? []),
+              ...(features?.in_progress ?? []),
+              ...(features?.done ?? []),
+            ]
+            const found = all.find((f) => f.id === id)
+            if (found) setSelectedFeature(found)
+            setShowResolveBlockers(false)
+          }}
+          onAfterRetry={() => {
+            queryClient.invalidateQueries({ queryKey: ['features', selectedProject] })
+            queryClient.invalidateQueries({ queryKey: ['blockers-summary', selectedProject] })
+          }}
         />
       )}
 

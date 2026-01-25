@@ -239,6 +239,44 @@ export interface ActivityClearResponse {
   deleted: number
 }
 
+// Blockers / recovery UX
+export interface BlockerExample {
+  id: number
+  name: string
+}
+
+export interface BlockerGroup {
+  key: string
+  kind: 'dependency' | 'cycle' | 'transient' | 'unknown'
+  title: string
+  count: number
+  example_feature: BlockerExample
+  depends_on: Array<{ id: number; name: string }>
+  blocks_count: number
+  retry_recommended: boolean
+}
+
+export interface BlockersSummaryResponse {
+  blocked_total: number
+  recommended_total: number
+  groups: BlockerGroup[]
+}
+
+export interface RetryBlockedRequest {
+  mode: 'recommended' | 'all' | 'group'
+  group_key?: string | null
+  max_immediate?: number
+  stagger_seconds?: number
+}
+
+export interface RetryBlockedResponse {
+  requested: number
+  retried: number
+  scheduled: number
+  mode: string
+  group_key?: string | null
+}
+
 export interface PruneWorkerLogsRequest {
   keep_days: number
   keep_files: number

@@ -13,6 +13,9 @@ import type {
   FeatureListResponse,
   Feature,
   FeatureCreate,
+  BlockersSummaryResponse,
+  RetryBlockedRequest,
+  RetryBlockedResponse,
   AgentStatusResponse,
   AgentActionResponse,
   AgentStartRequest,
@@ -223,6 +226,20 @@ export async function enqueueFeature(projectName: string, featureId: number): Pr
 export async function retryBlockedFeature(projectName: string, featureId: number): Promise<Feature> {
   return fetchJSON(`/projects/${encodeURIComponent(projectName)}/features/${featureId}/retry`, {
     method: 'POST',
+  })
+}
+
+export async function getBlockersSummary(projectName: string): Promise<BlockersSummaryResponse> {
+  return fetchJSON(`/projects/${encodeURIComponent(projectName)}/features/blockers/summary`)
+}
+
+export async function retryBlockedFeaturesBulk(
+  projectName: string,
+  req: RetryBlockedRequest
+): Promise<RetryBlockedResponse> {
+  return fetchJSON(`/projects/${encodeURIComponent(projectName)}/features/blockers/retry`, {
+    method: 'POST',
+    body: JSON.stringify(req),
   })
 }
 

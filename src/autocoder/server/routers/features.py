@@ -31,6 +31,46 @@ class EnqueueFeaturesResponse(BaseModel):
     enabled: int
 
 
+class BlockerExample(BaseModel):
+    id: int
+    name: str
+
+
+class BlockerGroup(BaseModel):
+    key: str
+    kind: str
+    title: str
+    count: int
+    example_feature: BlockerExample
+    depends_on: list[dict] = Field(default_factory=list)
+    blocks_count: int = 0
+    retry_recommended: bool = False
+
+
+class BlockersSummaryResponse(BaseModel):
+    blocked_total: int
+    recommended_total: int
+    groups: list[BlockerGroup]
+
+
+class RetryBlockedMode(str):
+    pass
+
+
+class RetryBlockedRequest(BaseModel):
+    mode: str = Field(default="recommended")  # recommended|all|group
+    group_key: str | None = None
+    max_immediate: int = Field(default=6, ge=0, le=1000)
+    stagger_seconds: int = Field(default=15, ge=0, le=3600)
+
+
+class RetryBlockedResponse(BaseModel):
+    requested: int
+    retried: int
+    scheduled: int
+    mode: str
+    group_key: str | None = None
+
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/projects/{project_name}/features", tags=["features"])
@@ -177,6 +217,59 @@ async def list_features(project_name: str):
     except Exception:
         logger.exception("Database error in list_features")
         raise HTTPException(status_code=500, detail="Database error occurred")
+
+
+@router.get("/blockers/summary", response_model=BlockersSummaryResponse)
+async def blockers_summary(project_name: str):
+    project_name = validate_project_name(project_name)
+    project_dir = _get_project_path(project_name).resolve()
+    if not project_dir.exists():
+        raise HTTPException(status_code=404, detail="Project directory not found")
+
+    db = get_database(str(project_dir))
+    try:
+        data = db.get_blockers_summary()
+        return BlockersSummaryResponse(**data)
+    except Exception:
+        logger.exception("Failed to build blockers summary")
+        raise HTTPException(status_code=500, detail="Failed to build blockers summary")
+
+
+@router.post("/blockers/retry", response_model=RetryBlockedResponse)
+async def retry_blocked(project_name: str, req: RetryBlockedRequest):
+    project_name = validate_project_name(project_name)
+    project_dir = _get_project_path(project_name).resolve()
+    if not project_dir.exists():
+        raise HTTPException(status_code=404, detail="Project directory not found")
+
+    db = get_database(str(project_dir))
+
+    mode = (req.mode or "recommended").strip().lower()
+    if mode not in {"recommended", "all", "group"}:
+        raise HTTPException(status_code=400, detail="Invalid mode")
+
+    try:
+        group_key = str(req.group_key or "").strip() if mode == "group" else None
+        deduped = db.get_blocked_feature_ids(mode=mode, group_key=group_key)
+
+        res = db.retry_blocked_features_bulk(
+            feature_ids=deduped,
+            max_immediate=req.max_immediate,
+            stagger_seconds=req.stagger_seconds,
+            preserve_branch=True,
+        )
+        return RetryBlockedResponse(
+            requested=int(res.get("requested") or 0),
+            retried=int(res.get("retried") or 0),
+            scheduled=int(res.get("scheduled") or 0),
+            mode=mode,
+            group_key=(group_key if mode == "group" else None),
+        )
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Failed to retry blocked features")
+        raise HTTPException(status_code=500, detail="Failed to retry blocked features")
 
 
 @router.post("", response_model=FeatureResponse)

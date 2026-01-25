@@ -1067,37 +1067,13 @@ class Database:
         Block pending features that can never become runnable due to dependencies.
 
         Currently blocks:
-        - depends_on points to a BLOCKED feature
         - dependency cycles among PENDING features
         """
         blocked = 0
         with self.get_connection() as conn:
             cursor = conn.cursor()
 
-            # 1) Pending features that depend on a BLOCKED feature.
-            cursor.execute(
-                """
-                SELECT f.id AS feature_id, dep.id AS dep_id, dep.name AS dep_name
-                FROM features f
-                JOIN feature_dependencies d ON d.feature_id = f.id
-                JOIN features dep ON dep.id = d.depends_on_id
-                WHERE f.status = 'PENDING' AND dep.status = 'BLOCKED'
-                ORDER BY f.id ASC, dep.id ASC
-                """
-            )
-            rows = cursor.fetchall()
-            by_feature: dict[int, list[dict[str, Any]]] = {}
-            for r in rows:
-                fid = int(r["feature_id"])
-                by_feature.setdefault(fid, []).append({"id": int(r["dep_id"]), "name": str(r["dep_name"] or "")})
-
-            for fid, deps in by_feature.items():
-                dep_list = ", ".join(f"#{d['id']} {d['name']}".strip() for d in deps[:5])
-                reason = f"Blocked: dependency is BLOCKED ({dep_list})"
-                if self.block_feature(fid, reason, preserve_branch=True):
-                    blocked += 1
-
-            # 2) Dependency cycles among PENDING features (best-effort).
+            # Dependency cycles among PENDING features (best-effort).
             cursor.execute(
                 """
                 SELECT d.feature_id AS feature_id, d.depends_on_id AS depends_on_id
@@ -1940,6 +1916,301 @@ class Database:
             )
             conn.commit()
             return cursor.rowcount > 0
+
+    def get_blockers_summary(self) -> Dict[str, Any]:
+        """
+        Summarize BLOCKED features into groups for UI-driven remediation.
+
+        This is intended for "Resolve blockers" UX when a project has no claimable work.
+        """
+        dep_re = re.compile(r"#(?P<id>\\d+)")
+
+        def _first_line(err: str) -> str:
+            s = (err or "").replace("\r\n", "\n").strip()
+            return (s.split("\n")[0] if s else "").strip()
+
+        def _is_dependency_block(err: str) -> bool:
+            return (err or "").strip().lower().startswith("blocked: dependency is blocked")
+
+        def _is_cycle(err: str) -> bool:
+            return "dependency cycle" in (err or "").lower()
+
+        def _is_transient(err: str) -> bool:
+            s = (err or "").lower()
+            transient_markers = [
+                "patch did not look like",
+                "returned non-diff output",
+                "not connected. call connect() first",
+                "credentials not found; skipped",
+                "codex not found",
+                "gemini not found",
+                "timed out",
+            ]
+            return any(m in s for m in transient_markers)
+
+        with self.get_connection() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                """
+                SELECT id, name, last_error, last_error_key
+                FROM features
+                WHERE status = 'BLOCKED' AND enabled = 1
+                ORDER BY priority DESC, id ASC
+                """
+            )
+            rows = [dict(r) for r in cur.fetchall()]
+
+            id_to_name: dict[int, str] = {}
+            cur.execute("SELECT id, name FROM features")
+            for r in cur.fetchall():
+                id_to_name[int(r[0])] = str(r[1] or "")
+
+            grouped: dict[str, dict[str, Any]] = {}
+            for r in rows:
+                fid = int(r.get("id") or 0)
+                name = str(r.get("name") or "")
+                last_error = str(r.get("last_error") or "").strip()
+                key_raw = str(r.get("last_error_key") or "").strip() or _first_line(last_error) or "Blocked"
+
+                kind = "unknown"
+                title = _first_line(last_error) or "Blocked"
+                depends_on: list[dict[str, Any]] = []
+                blocks_count = 0
+                retry_recommended = False
+
+                if _is_dependency_block(last_error):
+                    kind = "dependency"
+                    dep_ids = sorted({int(m.group("id")) for m in dep_re.finditer(last_error)})[:10]
+                    depends_on = [{"id": did, "name": id_to_name.get(did, "")} for did in dep_ids]
+                    if dep_ids:
+                        dep_list = ", ".join([f"#{d['id']} {d['name']}".strip() for d in depends_on[:3]])
+                        title = f"Waiting on {dep_list}" if dep_list else title
+                        key = f"dependency:{','.join(str(d) for d in dep_ids)}"
+                    else:
+                        key = f"dependency:{key_raw}"
+
+                    if dep_ids:
+                        placeholders = ",".join(["?"] * len(dep_ids))
+                        cur.execute(
+                            f"""
+                            SELECT COUNT(DISTINCT fx.id)
+                            FROM feature_dependencies dd
+                            JOIN features fx ON fx.id = dd.feature_id
+                            WHERE dd.depends_on_id IN ({placeholders})
+                              AND fx.enabled = 1
+                              AND fx.status IN ('PENDING','IN_PROGRESS')
+                            """,
+                            dep_ids,
+                        )
+                        blocks_count = int(cur.fetchone()[0] or 0)
+
+                elif _is_cycle(last_error):
+                    kind = "cycle"
+                    key = f"cycle:{key_raw}"
+                else:
+                    is_transient = _is_transient(last_error) or _is_transient(key_raw)
+                    kind = "transient" if is_transient else "unknown"
+                    key = f"{kind}:{key_raw}"
+                    retry_recommended = bool(is_transient)
+
+                g = grouped.get(key)
+                if not g:
+                    grouped[key] = {
+                        "key": key,
+                        "kind": kind,
+                        "title": title,
+                        "count": 1,
+                        "example_feature": {"id": fid, "name": name},
+                        "depends_on": depends_on,
+                        "blocks_count": blocks_count,
+                        "retry_recommended": retry_recommended,
+                    }
+                else:
+                    g["count"] = int(g.get("count") or 0) + 1
+                    g["blocks_count"] = max(int(g.get("blocks_count") or 0), int(blocks_count or 0))
+                    g["retry_recommended"] = bool(g.get("retry_recommended") or retry_recommended)
+
+            groups = sorted(
+                grouped.values(),
+                key=lambda g: (
+                    0 if g["kind"] == "dependency" else 1 if g["kind"] == "transient" else 2,
+                    -int(g.get("blocks_count") or 0),
+                    -int(g.get("count") or 0),
+                    str(g.get("key") or ""),
+                ),
+            )
+
+            recommended_total = sum(1 for r in rows if _is_transient(str(r.get("last_error") or "")))
+            return {
+                "blocked_total": int(len(rows)),
+                "recommended_total": int(recommended_total),
+                "groups": groups,
+            }
+
+    def get_blocked_feature_ids(
+        self,
+        *,
+        mode: str,
+        group_key: str | None = None,
+        limit: int = 10000,
+    ) -> List[int]:
+        """
+        Return blocked feature IDs for bulk retry operations.
+
+        Modes:
+        - all: all BLOCKED + enabled
+        - recommended: BLOCKED + enabled that look transient (safe-ish bulk retry)
+        - group: BLOCKED + enabled matching a blockers_summary group key
+        """
+        mode = (mode or "recommended").strip().lower()
+        if mode not in {"all", "recommended", "group"}:
+            raise ValueError("invalid mode")
+
+        summary = self.get_blockers_summary()
+        groups = summary.get("groups") or []
+        allowed_keys = {str(g.get("key") or "") for g in groups}
+        target = str(group_key or "").strip()
+        if mode == "group" and (not target or target not in allowed_keys):
+            return []
+
+        def _row_to_group_key(row: dict[str, Any]) -> tuple[str, bool]:
+            # Keep key generation compatible with get_blockers_summary().
+            last_error = str(row.get("last_error") or "").strip()
+            last_error_key = str(row.get("last_error_key") or "").strip()
+            first = (last_error.replace("\r\n", "\n").strip().split("\n")[0] if last_error else "").strip()
+            key_raw = last_error_key or first or "Blocked"
+
+            is_dep = last_error.strip().lower().startswith("blocked: dependency is blocked")
+            is_cycle = "dependency cycle" in last_error.lower()
+            transient = False
+            if not is_dep and not is_cycle:
+                s = (last_error or "").lower()
+                transient_markers = [
+                    "patch did not look like",
+                    "returned non-diff output",
+                    "not connected. call connect() first",
+                    "credentials not found; skipped",
+                    "codex not found",
+                    "gemini not found",
+                    "timed out",
+                ]
+                transient = any(m in s for m in transient_markers)
+
+            if is_dep:
+                dep_ids = sorted({int(m) for m in re.findall(r"#(\\d+)", last_error)})[:10]
+                if dep_ids:
+                    return (f"dependency:{','.join(str(d) for d in dep_ids)}", False)
+                return (f"dependency:{key_raw}", False)
+            if is_cycle:
+                return (f"cycle:{key_raw}", False)
+            kind = "transient" if transient else "unknown"
+            return (f"{kind}:{key_raw}", transient)
+
+        ids: list[int] = []
+        with self.get_connection() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                """
+                SELECT id, last_error, last_error_key
+                FROM features
+                WHERE status = 'BLOCKED' AND enabled = 1
+                ORDER BY priority DESC, id ASC
+                LIMIT ?
+                """,
+                (int(limit),),
+            )
+            for r in cur.fetchall():
+                row = dict(r)
+                gid, is_recommended = _row_to_group_key(row)
+                if mode == "all":
+                    ids.append(int(row["id"]))
+                    continue
+                if mode == "recommended":
+                    if is_recommended:
+                        ids.append(int(row["id"]))
+                    continue
+                if mode == "group" and gid == target:
+                    ids.append(int(row["id"]))
+
+        return ids
+
+    def retry_blocked_features_bulk(
+        self,
+        *,
+        feature_ids: List[int],
+        max_immediate: int = 6,
+        stagger_seconds: int = 15,
+        preserve_branch: bool = True,
+    ) -> Dict[str, int]:
+        """
+        Force multiple BLOCKED features back to PENDING with optional staggering (next_attempt_at).
+
+        Returns: { requested, retried, scheduled }
+        """
+        ids = [int(x) for x in (feature_ids or []) if int(x) > 0]
+        seen: set[int] = set()
+        deduped: list[int] = []
+        for fid in ids:
+            if fid in seen:
+                continue
+            seen.add(fid)
+            deduped.append(fid)
+
+        max_immediate = max(0, int(max_immediate))
+        stagger_seconds = max(0, int(stagger_seconds))
+        requested = len(deduped)
+        if not deduped:
+            return {"requested": 0, "retried": 0, "scheduled": 0}
+
+        now = datetime.now(UTC).replace(tzinfo=None)
+
+        with self.get_connection() as conn:
+            cur = conn.cursor()
+            placeholders = ",".join(["?"] * len(deduped))
+            cur.execute(
+                f"SELECT id FROM features WHERE id IN ({placeholders}) AND status = 'BLOCKED'",
+                deduped,
+            )
+            eligible = [int(r[0]) for r in cur.fetchall()]
+
+            retried = 0
+            scheduled = 0
+            for idx, fid in enumerate(eligible):
+                next_attempt_at = None
+                if stagger_seconds > 0 and idx >= max_immediate:
+                    offset = (idx - max_immediate + 1) * stagger_seconds
+                    offset = int(max(1, round(offset * random.uniform(0.8, 1.2))))
+                    dt = now + timedelta(seconds=offset)
+                    next_attempt_at = dt.strftime("%Y-%m-%d %H:%M:%S.%f")
+                    scheduled += 1
+
+                cur.execute(
+                    """
+                    UPDATE features
+                    SET status = 'PENDING',
+                        enabled = 1,
+                        assigned_agent_id = NULL,
+                        assigned_at = NULL,
+                        branch_name = CASE WHEN ? THEN branch_name ELSE NULL END,
+                        review_status = 'PENDING',
+                        passes = FALSE,
+                        completed_at = NULL,
+                        next_attempt_at = ?,
+                        last_error_key = NULL,
+                        same_error_streak = 0,
+                        last_diff_fingerprint = NULL,
+                        same_diff_streak = 0,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ? AND status = 'BLOCKED'
+                    """,
+                    (1 if preserve_branch else 0, next_attempt_at, int(fid)),
+                )
+                if cur.rowcount:
+                    retried += 1
+
+            conn.commit()
+
+        return {"requested": int(requested), "retried": int(retried), "scheduled": int(scheduled)}
 
     def increment_qa_attempts(self, feature_id: int) -> int | None:
         """Increment QA sub-agent attempts and return the new value."""
