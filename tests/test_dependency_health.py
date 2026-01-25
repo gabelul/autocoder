@@ -9,12 +9,13 @@ def test_block_unresolvable_dependencies_blocks_downstream_of_blocked(tmp_path):
 
     assert db.block_feature(a_id, "Blocked: upstream failure") is True
     n = db.block_unresolvable_dependencies()
-    assert n >= 1
+    # Downstream items should remain PENDING (not claimable) so they can automatically resume
+    # after the dependency is resolved, without requiring manual retries.
+    assert n == 0
 
     b = db.get_feature(b_id)
     assert b is not None
-    assert b["status"] == "BLOCKED"
-    assert "dependency is BLOCKED" in str(b.get("last_error") or "")
+    assert b["status"] == "PENDING"
 
 
 def test_block_unresolvable_dependencies_blocks_cycles(tmp_path):

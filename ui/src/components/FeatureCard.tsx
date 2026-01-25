@@ -1,4 +1,4 @@
-import { CheckCircle2, Circle, Loader2, AlertCircle, PauseCircle } from 'lucide-react'
+import { CheckCircle2, Circle, Loader2, AlertCircle, PauseCircle, Clock } from 'lucide-react'
 import type { Feature } from '../lib/types'
 
 interface FeatureCardProps {
@@ -102,11 +102,16 @@ export function FeatureCard({ feature, onClick, isInProgress }: FeatureCardProps
             <PauseCircle size={16} className="text-[var(--color-neo-text-muted)]" />
             <span className="text-[var(--color-neo-text-muted)] font-bold">Staged</span>
           </>
+        ) : isWaiting ? (
+          <>
+            <Clock size={16} className="text-[var(--color-neo-text-secondary)]" />
+            <span className="text-[var(--color-neo-text-secondary)] font-bold">Waiting</span>
+          </>
         ) : hasError ? (
           <>
             <AlertCircle size={16} className="text-[var(--color-neo-pending)]" />
             <span className="text-[var(--color-neo-pending)] font-bold">
-              {isWaiting ? 'Waiting' : 'Retrying'}
+              Retrying
             </span>
             {attempts > 0 && (
               <span className="font-mono text-xs text-neo-text-secondary">({attempts})</span>
