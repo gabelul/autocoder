@@ -1940,6 +1940,7 @@ class Database:
             transient_markers = [
                 "patch did not look like",
                 "returned non-diff output",
+                "produced no git diff",
                 "not connected. call connect() first",
                 "credentials not found; skipped",
                 "codex not found",
@@ -2088,6 +2089,7 @@ class Database:
                 transient_markers = [
                     "patch did not look like",
                     "returned non-diff output",
+                    "produced no git diff",
                     "not connected. call connect() first",
                     "credentials not found; skipped",
                     "codex not found",
