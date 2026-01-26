@@ -883,6 +883,14 @@ function App() {
                   percentage={progress.percentage}
                   isConnected={wsState.isConnected}
                   agentStatus={wsState.agentStatus}
+                  agentActivity={
+                    agentStatusData?.parallel_mode
+                      ? {
+                          active: parallelAgentsQuery.data?.active_count ?? 0,
+                          total: agentStatusData?.parallel_count ?? 0,
+                        }
+                      : null
+                  }
                   featureCounts={featureCounts}
                   onResolveBlockers={blockedNow > 0 ? () => setShowResolveBlockers(true) : undefined}
                   agentBadge={
