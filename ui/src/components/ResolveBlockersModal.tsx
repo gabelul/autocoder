@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { AlertTriangle, ExternalLink, RefreshCw, X } from 'lucide-react'
-import type { BlockerGroup, RetryBlockedRequest } from '../lib/types'
+import type { BlockerGroup, RetryBlockedRequest, RetryBlockedResponse } from '../lib/types'
 import { useBlockersSummary, useRetryBlockedBulk } from '../hooks/useBlockers'
 
 interface ResolveBlockersModalProps {
@@ -38,20 +38,23 @@ export function ResolveBlockersModal({
   const summaryQuery = useBlockersSummary(projectName)
   const retryMutation = useRetryBlockedBulk(projectName)
   const [confirmAll, setConfirmAll] = useState(false)
+  const [lastRetry, setLastRetry] = useState<RetryBlockedResponse | null>(null)
 
   const groups = (summaryQuery.data?.groups ?? []) as BlockerGroup[]
   const recommendedGroups = useMemo(() => groups.filter((g) => g.retry_recommended), [groups])
+  const blockedTotal = summaryQuery.data?.blocked_total ?? 0
 
   if (!isOpen) return null
 
   const doRetry = async (req: RetryBlockedRequest) => {
     try {
       if (isAgentRunning && onPause) await onPause()
-      await retryMutation.mutateAsync({
+      const res = await retryMutation.mutateAsync({
         ...req,
         max_immediate: req.max_immediate ?? maxImmediate,
         stagger_seconds: req.stagger_seconds ?? 15,
       })
+      setLastRetry(res)
       onAfterRetry()
     } finally {
       if (isAgentRunning && onResume) await onResume()
@@ -104,6 +107,37 @@ export function ResolveBlockersModal({
               </div>
             ) : null}
 
+            {!isAgentRunning ? (
+              <div className="neo-card p-4 border-3 border-[var(--color-neo-border)] bg-[var(--color-neo-bg)]">
+                <div className="text-sm">
+                  Agent is <span className="font-display font-bold uppercase">stopped</span>. Retried features will be
+                  queued, but nothing will run until you press <span className="font-mono">Run</span>.
+                </div>
+              </div>
+            ) : null}
+
+            {lastRetry ? (
+              <div className="neo-card p-4 border-3 border-[var(--color-neo-border)] bg-[var(--color-neo-card)]">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <div className="font-display font-bold uppercase tracking-wide">Retries queued</div>
+                    <div className="text-sm text-[var(--color-neo-text-secondary)] mt-1">
+                      Requested <span className="font-mono">{lastRetry.requested}</span> • retried{' '}
+                      <span className="font-mono">{lastRetry.retried}</span> • scheduled{' '}
+                      <span className="font-mono">{lastRetry.scheduled}</span>
+                    </div>
+                  </div>
+                  <button
+                    className="neo-btn neo-btn-secondary text-xs"
+                    onClick={() => setLastRetry(null)}
+                    title="Dismiss"
+                  >
+                    <X size={16} />
+                  </button>
+                </div>
+              </div>
+            ) : null}
+
             <div className="flex flex-wrap items-center gap-2">
               <button
                 className="neo-btn neo-btn-primary text-sm"
@@ -116,9 +150,9 @@ export function ResolveBlockersModal({
               </button>
               <button
                 className="neo-btn neo-btn-secondary text-sm"
-                disabled={retryMutation.isPending}
+                disabled={blockedTotal === 0 || retryMutation.isPending}
                 onClick={() => setConfirmAll(true)}
-                title="Retry every blocked feature"
+                title={blockedTotal === 0 ? 'No blocked features right now' : 'Retry every blocked feature'}
               >
                 Retry all blocked
               </button>
@@ -147,6 +181,16 @@ export function ResolveBlockersModal({
                   >
                     Retry all
                   </button>
+                </div>
+              </div>
+            ) : null}
+
+            {blockedTotal === 0 && !summaryQuery.isLoading && !summaryQuery.error ? (
+              <div className="neo-card p-4 border-3 border-[var(--color-neo-border)] bg-[var(--color-neo-bg)]">
+                <div className="font-display font-bold uppercase tracking-wide">No blocked features</div>
+                <div className="text-sm text-[var(--color-neo-text-secondary)] mt-1">
+                  If you’re seeing failures, they may be in backoff/retry (not BLOCKED). Check the Pending column and
+                  Mission Control for the latest errors.
                 </div>
               </div>
             ) : null}
