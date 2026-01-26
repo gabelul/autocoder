@@ -1,4 +1,5 @@
-import { Play, Pause, Square, Loader2, Zap, Users } from 'lucide-react'
+import { Play, Pause, Square, Loader2, Zap, Users, AlertTriangle, X } from 'lucide-react'
+import { useMemo, useState } from 'react'
 import { useStartAgent, useStopAgent, usePauseAgent, useResumeAgent } from '../hooks/useProjects'
 import type { AgentStatus } from '../lib/types'
 
@@ -9,6 +10,8 @@ interface AgentControlProps {
   projectName: string
   status: AgentStatus
   setupRequired?: boolean
+  onOpenLogs?: () => void
+  onForceStandardMode?: () => void
 
   // Current running mode (from server status)
   yoloMode?: boolean
@@ -28,6 +31,8 @@ export function AgentControl({
   projectName,
   status,
   setupRequired = false,
+  onOpenLogs,
+  onForceStandardMode,
   yoloMode = false,
   parallelMode = false,
   parallelCount = null,
@@ -42,32 +47,63 @@ export function AgentControl({
   const stopAgent = useStopAgent(projectName)
   const pauseAgent = usePauseAgent(projectName)
   const resumeAgent = useResumeAgent(projectName)
+  const [lastError, setLastError] = useState<string | null>(null)
 
   const isLoading = startAgent.isPending || stopAgent.isPending || pauseAgent.isPending || resumeAgent.isPending
   const startDisabled = Boolean(isLoading || setupRequired)
 
+  const isParallelGitError = useMemo(() => {
+    if (!lastError) return false
+    return runMode === 'parallel' && /not a git repository/i.test(lastError)
+  }, [lastError, runMode])
+
   const handleStart = () => {
+    setLastError(null)
+
+    const onError = (e: unknown) => {
+      const msg = e instanceof Error ? e.message : String(e)
+      setLastError(msg)
+    }
+
     if (yoloEnabled) {
-      startAgent.mutate({ yolo_mode: true, parallel_mode: false })
+      startAgent.mutate({ yolo_mode: true, parallel_mode: false }, { onError })
       return
     }
 
     if (runMode === 'parallel') {
-      startAgent.mutate({
-        parallel_mode: true,
-        parallel_count: parallelCountSetting,
-        model_preset: parallelPresetSetting,
-        yolo_mode: false,
-      })
+      startAgent.mutate(
+        {
+          parallel_mode: true,
+          parallel_count: parallelCountSetting,
+          model_preset: parallelPresetSetting,
+          yolo_mode: false,
+        },
+        { onError }
+      )
       return
     }
 
-    startAgent.mutate({ yolo_mode: false, parallel_mode: false })
+    startAgent.mutate({ yolo_mode: false, parallel_mode: false }, { onError })
   }
 
-  const handleStop = () => stopAgent.mutate()
-  const handlePause = () => pauseAgent.mutate()
-  const handleResume = () => resumeAgent.mutate()
+  const handleStop = () => {
+    setLastError(null)
+    stopAgent.mutate(undefined, {
+      onError: (e) => setLastError(e instanceof Error ? e.message : String(e)),
+    })
+  }
+  const handlePause = () => {
+    setLastError(null)
+    pauseAgent.mutate(undefined, {
+      onError: (e) => setLastError(e instanceof Error ? e.message : String(e)),
+    })
+  }
+  const handleResume = () => {
+    setLastError(null)
+    resumeAgent.mutate(undefined, {
+      onError: (e) => setLastError(e instanceof Error ? e.message : String(e)),
+    })
+  }
 
   const startTitle = yoloEnabled
     ? 'Start (YOLO)'
@@ -76,7 +112,7 @@ export function AgentControl({
       : 'Start'
 
   return (
-    <div className="flex items-center gap-2">
+    <div className="relative flex items-center gap-2">
       <StatusIndicator status={status} />
 
       {(status === 'running' || status === 'paused') && (
@@ -151,6 +187,52 @@ export function AgentControl({
           </>
         ) : null}
       </div>
+
+      {lastError ? (
+        <div className="absolute top-full right-0 mt-2 w-[min(520px,calc(100vw-24px))] z-[var(--z-toast)]">
+          <div className="neo-card p-4 border-3 border-[var(--color-neo-danger)] bg-[var(--color-neo-card)] shadow-[6px_6px_0px_rgba(0,0,0,1)]">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <div className="flex items-center gap-2">
+                  <AlertTriangle size={16} className="text-[var(--color-neo-danger)]" />
+                  <div className="font-display font-bold uppercase tracking-wide text-sm">Start failed</div>
+                </div>
+                <div className="mt-1 text-sm text-[var(--color-neo-text-secondary)] whitespace-pre-wrap break-words">
+                  {lastError}
+                </div>
+                {isParallelGitError ? (
+                  <div className="mt-2 text-xs text-[var(--color-neo-text-secondary)]">
+                    Parallel mode uses Git worktrees. Initialize Git in the project folder, or switch to Standard mode.
+                  </div>
+                ) : null}
+              </div>
+
+              <button className="neo-btn neo-btn-secondary text-xs" onClick={() => setLastError(null)} title="Dismiss">
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="mt-3 flex flex-wrap items-center gap-2 justify-end">
+              {isParallelGitError && onForceStandardMode ? (
+                <button
+                  className="neo-btn neo-btn-secondary text-xs"
+                  onClick={() => {
+                    onForceStandardMode()
+                  }}
+                  title="Switch to Standard mode"
+                >
+                  Use Standard mode
+                </button>
+              ) : null}
+              {onOpenLogs ? (
+                <button className="neo-btn neo-btn-secondary text-xs" onClick={onOpenLogs} title="Open logs">
+                  Open logs
+                </button>
+              ) : null}
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   )
 }
