@@ -7,22 +7,23 @@ Provides start/stop/pause/resume functionality with cross-platform support.
 """
 
 import asyncio
+import contextlib
 import logging
+import os
 import re
 import subprocess
 import sys
 import threading
-import os
-import contextlib
+from collections.abc import Awaitable, Callable
 from datetime import datetime
 from pathlib import Path
-from typing import Literal, Callable, Awaitable, Set
+from typing import Literal
 
 import psutil
 
-from ..settings_store import apply_advanced_settings_env
 from autocoder.core.project_runtime_settings import apply_project_runtime_settings_env
 
+from ..settings_store import apply_advanced_settings_env
 
 logger = logging.getLogger(__name__)
 
@@ -71,11 +72,11 @@ def sanitize_output(line: str) -> str:
 
 def is_auth_error(line: str) -> bool:
     """Return True if a line of output looks like an auth failure."""
-    l = (line or "").strip()
-    if not l:
+    line_s = (line or "").strip()
+    if not line_s:
         return False
     for pattern in AUTH_ERROR_PATTERNS:
-        if re.search(pattern, l, flags=re.IGNORECASE):
+        if re.search(pattern, line_s, flags=re.IGNORECASE):
             return True
     return False
 
@@ -115,8 +116,8 @@ class AgentProcessManager:
         self.model_preset: str = "balanced"  # Model preset for parallel mode
 
         # Support multiple callbacks (for multiple WebSocket clients)
-        self._output_callbacks: Set[Callable[[str], Awaitable[None]]] = set()
-        self._status_callbacks: Set[Callable[[str], Awaitable[None]]] = set()
+        self._output_callbacks: set[Callable[[str], Awaitable[None]]] = set()
+        self._status_callbacks: set[Callable[[str], Awaitable[None]]] = set()
         self._callbacks_lock = threading.Lock()
 
         # Lock file to prevent multiple instances (stored in project directory)
@@ -725,7 +726,13 @@ class AgentProcessManager:
             if not lock_info:
                 self._external_pid = None
                 self._external_create_time = None
-                if self.status == "running":
+                if self.lock_file.exists():
+                    # Stale lock: process is not running anymore. Clear it so the UI can start again.
+                    self._remove_lock()
+                    if self.status in ("running", "paused"):
+                        self.status = "crashed"
+                        self.started_at = None
+                elif self.status == "running":
                     # We previously believed an external process was running; clear it.
                     self.status = "stopped"
                     self.started_at = None

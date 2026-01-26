@@ -1,3 +1,4 @@
+import asyncio
 import os
 import types
 
@@ -32,4 +33,16 @@ def test_agent_lock_create_is_atomic(tmp_path):
     assert manager._create_lock() is True
     assert manager.lock_file.read_text(encoding="utf-8").strip().startswith(f"{os.getpid()}:")
     assert manager._create_lock() is False
+
+
+def test_healthcheck_clears_stale_lock_and_running_status(tmp_path):
+    manager = AgentProcessManager("test", tmp_path, tmp_path)
+    manager.status = "running"
+    # Point the lock at a PID that (very likely) doesn't exist.
+    manager.lock_file.write_text("999999:0.0", encoding="utf-8")
+
+    asyncio.run(manager.healthcheck())
+
+    assert manager.lock_file.exists() is False
+    assert manager.status in {"stopped", "crashed"}
 
