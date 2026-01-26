@@ -868,6 +868,7 @@ function App() {
                   isConnected={wsState.isConnected}
                   agentStatus={wsState.agentStatus}
                   featureCounts={featureCounts}
+                  onResolveBlockers={blockedNow > 0 ? () => setShowResolveBlockers(true) : undefined}
                 />
 
                 {selectedProject && isStalledOnBlockers && (
