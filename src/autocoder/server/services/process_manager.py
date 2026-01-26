@@ -241,6 +241,46 @@ class AgentProcessManager:
         self.lock_file.unlink(missing_ok=True)
         return None
 
+    def _apply_mode_from_cmdline(self, cmdline: list[str]) -> None:
+        """
+        Best-effort infer mode settings from a running process command line.
+
+        Used when the UI server restarts and we only have a lock-owned PID (no subprocess handle).
+        """
+        try:
+            idx = cmdline.index("autocoder.cli")
+        except ValueError:
+            return
+
+        if idx + 1 >= len(cmdline):
+            return
+
+        subcmd = str(cmdline[idx + 1]).strip().lower()
+        if subcmd == "parallel":
+            self.parallel_mode = True
+            self.yolo_mode = False
+
+            # Parse `--parallel N` and `--preset preset`.
+            count = None
+            preset = None
+            for i, arg in enumerate(cmdline):
+                if arg == "--parallel" and i + 1 < len(cmdline):
+                    with contextlib.suppress(Exception):
+                        count = int(cmdline[i + 1])
+                if arg == "--preset" and i + 1 < len(cmdline):
+                    preset = str(cmdline[i + 1])
+
+            if isinstance(count, int) and 1 <= count <= 10:
+                self.parallel_count = count
+            if preset:
+                self.model_preset = preset
+            return
+
+        if subcmd == "agent":
+            self.parallel_mode = False
+            self.yolo_mode = any(str(a).strip().lower() == "--yolo" for a in cmdline)
+            return
+
     def _parse_lock_content(self, raw: str) -> tuple[int, float | None]:
         """
         Parse lock file content.
@@ -694,6 +734,8 @@ class AgentProcessManager:
             pid, stored_create_time, proc = lock_info
             self._external_pid = pid
             self._external_create_time = stored_create_time
+            with contextlib.suppress(Exception):
+                self._apply_mode_from_cmdline([str(x) for x in proc.cmdline()])
             if stored_create_time is not None:
                 with contextlib.suppress(Exception):
                     self.started_at = datetime.fromtimestamp(stored_create_time)
