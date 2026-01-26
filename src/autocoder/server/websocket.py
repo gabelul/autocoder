@@ -136,6 +136,29 @@ async def poll_progress(websocket: WebSocket, project_name: str, project_dir: Pa
             break
 
 
+async def poll_agent_status(websocket: WebSocket, agent_manager):
+    """Poll agent status so the UI stays correct after server restarts / external runs."""
+    last_status: str | None = None
+    while True:
+        try:
+            await agent_manager.healthcheck()
+            status = agent_manager.status
+            if status != last_status:
+                last_status = status
+                await websocket.send_json(
+                    {
+                        "type": "agent_status",
+                        "status": status,
+                    }
+                )
+            await asyncio.sleep(2)
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.warning(f"Agent status polling error: {e}")
+            break
+
+
 async def project_websocket(websocket: WebSocket, project_name: str):
     """
     WebSocket endpoint for project updates.
@@ -190,14 +213,9 @@ async def project_websocket(websocket: WebSocket, project_name: str):
 
     # Start progress polling task
     poll_task = asyncio.create_task(poll_progress(websocket, project_name, project_dir))
+    status_task = asyncio.create_task(poll_agent_status(websocket, agent_manager))
 
     try:
-        # Send initial status
-        await websocket.send_json({
-            "type": "agent_status",
-            "status": agent_manager.status,
-        })
-
         # Send initial progress
         count_passing_tests = _get_count_passing_tests()
         passing, in_progress, total = count_passing_tests(project_dir)
@@ -232,8 +250,13 @@ async def project_websocket(websocket: WebSocket, project_name: str):
     finally:
         # Clean up
         poll_task.cancel()
+        status_task.cancel()
         try:
             await poll_task
+        except asyncio.CancelledError:
+            pass
+        try:
+            await status_task
         except asyncio.CancelledError:
             pass
 

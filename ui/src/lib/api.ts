@@ -63,6 +63,13 @@ async function fetchJSON<T>(url: string, options?: RequestInit): Promise<T> {
   return response.json()
 }
 
+function ensureAgentActionOk<T extends { success?: boolean; message?: string }>(res: T): T {
+  if (res && res.success === false) {
+    throw new Error(res.message || 'Agent action failed')
+  }
+  return res
+}
+
 // ============================================================================
 // Projects API
 // ============================================================================
@@ -267,7 +274,7 @@ export async function startAgent(
   projectName: string,
   options: AgentStartRequest = {}
 ): Promise<AgentActionResponse> {
-  return fetchJSON(`/projects/${encodeURIComponent(projectName)}/agent/start`, {
+  const res = await fetchJSON<AgentActionResponse>(`/projects/${encodeURIComponent(projectName)}/agent/start`, {
     method: 'POST',
     body: JSON.stringify({
       yolo_mode: options.yolo_mode || false,
@@ -276,24 +283,28 @@ export async function startAgent(
       model_preset: options.model_preset || 'balanced',
     }),
   })
+  return ensureAgentActionOk(res)
 }
 
 export async function stopAgent(projectName: string): Promise<AgentActionResponse> {
-  return fetchJSON(`/projects/${encodeURIComponent(projectName)}/agent/stop`, {
+  const res = await fetchJSON<AgentActionResponse>(`/projects/${encodeURIComponent(projectName)}/agent/stop`, {
     method: 'POST',
   })
+  return ensureAgentActionOk(res)
 }
 
 export async function pauseAgent(projectName: string): Promise<AgentActionResponse> {
-  return fetchJSON(`/projects/${encodeURIComponent(projectName)}/agent/pause`, {
+  const res = await fetchJSON<AgentActionResponse>(`/projects/${encodeURIComponent(projectName)}/agent/pause`, {
     method: 'POST',
   })
+  return ensureAgentActionOk(res)
 }
 
 export async function resumeAgent(projectName: string): Promise<AgentActionResponse> {
-  return fetchJSON(`/projects/${encodeURIComponent(projectName)}/agent/resume`, {
+  const res = await fetchJSON<AgentActionResponse>(`/projects/${encodeURIComponent(projectName)}/agent/resume`, {
     method: 'POST',
   })
+  return ensureAgentActionOk(res)
 }
 
 export async function getAgentSchedule(projectName: string): Promise<AgentScheduleResponse> {

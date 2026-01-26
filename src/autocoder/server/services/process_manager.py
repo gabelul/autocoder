@@ -121,6 +121,11 @@ class AgentProcessManager:
 
         # Lock file to prevent multiple instances (stored in project directory)
         self.lock_file = self.project_dir / ".agent.lock"
+
+        # If the UI server restarts while an agent is still running, the manager won't have a process handle.
+        # In that case we track the lock-owned PID so status/stop still work.
+        self._external_pid: int | None = None
+        self._external_create_time: float | None = None
         self._auth_help_sent = False
 
     @property
@@ -177,7 +182,64 @@ class AgentProcessManager:
 
     @property
     def pid(self) -> int | None:
-        return self.process.pid if self.process else None
+        if self.process:
+            return self.process.pid
+        return self._external_pid
+
+    def _get_lock_process(self) -> tuple[int, float | None, psutil.Process] | None:
+        """Return (pid, stored_create_time, psutil.Process) if lock points to a live process."""
+        if not self.lock_file.exists():
+            return None
+
+        try:
+            pid, stored_create_time = self._parse_lock_content(self.lock_file.read_text(encoding="utf-8"))
+        except (ValueError, OSError):
+            self.lock_file.unlink(missing_ok=True)
+            return None
+
+        if not psutil.pid_exists(pid):
+            self.lock_file.unlink(missing_ok=True)
+            return None
+
+        try:
+            proc = psutil.Process(pid)
+        except psutil.NoSuchProcess:
+            self.lock_file.unlink(missing_ok=True)
+            return None
+        except psutil.AccessDenied:
+            # Can't inspect, but lock exists and PID exists. Treat as live.
+            try:
+                proc = psutil.Process(pid)
+            except Exception:
+                return None
+
+        if stored_create_time is not None:
+            try:
+                if abs(proc.create_time() - stored_create_time) > 1.0:
+                    self.lock_file.unlink(missing_ok=True)
+                    return None
+            except Exception:
+                # If we can't validate create_time, assume the lock is valid.
+                return pid, stored_create_time, proc
+            return pid, stored_create_time, proc
+
+        # Legacy lock: best-effort ensure it's our agent, otherwise treat as stale.
+        try:
+            cmdline = " ".join(proc.cmdline())
+        except psutil.AccessDenied:
+            return pid, None, proc
+        except Exception:
+            return pid, None, proc
+
+        cmdline_l = cmdline.lower()
+        project_l = str(self.project_dir.resolve()).lower()
+        if "autonomous_agent_demo.py" in cmdline_l or "orchestrator_demo.py" in cmdline_l:
+            return pid, None, proc
+        if "autocoder.cli" in cmdline_l and project_l in cmdline_l:
+            return pid, None, proc
+
+        self.lock_file.unlink(missing_ok=True)
+        return None
 
     def _parse_lock_content(self, raw: str) -> tuple[int, float | None]:
         """
@@ -506,7 +568,8 @@ class AgentProcessManager:
         Returns:
             Tuple of (success, message)
         """
-        if not self.process or self.status == "stopped":
+        pid = self.pid
+        if not pid or self.status == "stopped":
             return False, "Agent is not running"
 
         try:
@@ -518,7 +581,6 @@ class AgentProcessManager:
                 except asyncio.CancelledError:
                     pass
 
-            pid = self.process.pid
             expected_create_time: float | None = None
             if self.lock_file.exists():
                 with contextlib.suppress(Exception):
@@ -533,18 +595,22 @@ class AgentProcessManager:
             self._kill_process_tree(pid, expected_create_time=expected_create_time)
 
             # Wait a bit for the parent process handle to settle.
-            loop = asyncio.get_running_loop()
-            with contextlib.suppress(Exception):
-                await asyncio.wait_for(
-                    loop.run_in_executor(None, self.process.wait),
-                    timeout=5.0,
-                )
+            if self.process:
+                loop = asyncio.get_running_loop()
+                with contextlib.suppress(Exception):
+                    await asyncio.wait_for(
+                        loop.run_in_executor(None, self.process.wait),
+                        timeout=5.0,
+                    )
 
             self._remove_lock()
             self.status = "stopped"
             self.process = None
             self.started_at = None
+            self._external_pid = None
+            self._external_create_time = None
             self.yolo_mode = False  # Reset YOLO mode
+            self.parallel_mode = False
 
             return True, "Agent stopped"
         except Exception as e:
@@ -558,17 +624,21 @@ class AgentProcessManager:
         Returns:
             Tuple of (success, message)
         """
-        if not self.process or self.status != "running":
+        pid = self.pid
+        if not pid or self.status != "running":
             return False, "Agent is not running"
 
         try:
-            proc = psutil.Process(self.process.pid)
+            proc = psutil.Process(pid)
             proc.suspend()
             self.status = "paused"
             return True, "Agent paused"
         except psutil.NoSuchProcess:
             self.status = "crashed"
             self._remove_lock()
+            self.process = None
+            self._external_pid = None
+            self._external_create_time = None
             return False, "Agent process no longer exists"
         except Exception as e:
             logger.exception("Failed to pause agent")
@@ -581,17 +651,21 @@ class AgentProcessManager:
         Returns:
             Tuple of (success, message)
         """
-        if not self.process or self.status != "paused":
+        pid = self.pid
+        if not pid or self.status != "paused":
             return False, "Agent is not paused"
 
         try:
-            proc = psutil.Process(self.process.pid)
+            proc = psutil.Process(pid)
             proc.resume()
             self.status = "running"
             return True, "Agent resumed"
         except psutil.NoSuchProcess:
             self.status = "crashed"
             self._remove_lock()
+            self.process = None
+            self._external_pid = None
+            self._external_create_time = None
             return False, "Agent process no longer exists"
         except Exception as e:
             logger.exception("Failed to resume agent")
@@ -607,7 +681,30 @@ class AgentProcessManager:
             True if healthy, False otherwise
         """
         if not self.process:
-            return self.status == "stopped"
+            lock_info = self._get_lock_process()
+            if not lock_info:
+                self._external_pid = None
+                self._external_create_time = None
+                if self.status == "running":
+                    # We previously believed an external process was running; clear it.
+                    self.status = "stopped"
+                    self.started_at = None
+                return self.status == "stopped"
+
+            pid, stored_create_time, proc = lock_info
+            self._external_pid = pid
+            self._external_create_time = stored_create_time
+            if stored_create_time is not None:
+                with contextlib.suppress(Exception):
+                    self.started_at = datetime.fromtimestamp(stored_create_time)
+            else:
+                with contextlib.suppress(Exception):
+                    self.started_at = datetime.fromtimestamp(proc.create_time())
+
+            # Surface externally-running processes as running so the UI doesn't show "stopped" with a live lock.
+            if self.status == "stopped":
+                self.status = "running"
+            return True
 
         poll = self.process.poll()
         if poll is not None:
@@ -615,6 +712,8 @@ class AgentProcessManager:
             if self.status in ("running", "paused"):
                 self.status = "crashed"
                 self._remove_lock()
+                self._external_pid = None
+                self._external_create_time = None
             return False
 
         return True
