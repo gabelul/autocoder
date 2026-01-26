@@ -142,6 +142,7 @@ class TerminalSession:
 
         self._is_active = False
         self._output_task: asyncio.Task | None = None
+        self.last_error: str | None = None
 
         self._output_callbacks: Set[Callable[[bytes], None]] = set()
         self._callbacks_lock = threading.Lock()
@@ -187,16 +188,19 @@ class TerminalSession:
             return True
 
         shell = _get_shell()
+        self.last_error = None
 
         try:
             if IS_WINDOWS:
                 if not WINPTY_AVAILABLE:
                     _ensure_winpty()
                 if not WINPTY_AVAILABLE:
-                    logger.warning(
+                    msg = (
                         "Windows terminal sessions disabled (pywinpty not available). "
-                        "Set AUTOCODER_AUTO_INSTALL_WINPTY=1 or run: pip install pywinpty"
+                        "Fix: pip install pywinpty (or set AUTOCODER_AUTO_INSTALL_WINPTY=1 and restart autocoder-ui)."
                     )
+                    self.last_error = msg
+                    logger.warning(msg)
                     return False
                 assert WinPtyProcess is not None
                 self._pty_process = WinPtyProcess.spawn(
@@ -232,7 +236,8 @@ class TerminalSession:
             logger.info(f"Terminal started for {self.project_name}")
             return True
         except Exception as e:
-            logger.warning(f"Failed to start terminal for {self.project_name}: {e}")
+            self.last_error = f"Failed to start terminal ({shell}) in {self.project_dir}: {e}"
+            logger.warning(f"Failed to start terminal for {self.project_name}: {self.last_error}")
             self._is_active = False
             return False
 

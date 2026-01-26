@@ -135,6 +135,18 @@ export function AgentControl({
         </>
       )}
 
+      {(status === 'stopped' || status === 'crashed') && !setupRequired && !yoloEnabled && runMode === 'parallel' && (
+        <div
+          className="flex items-center gap-1 px-2 py-1 bg-[var(--color-neo-progress)] border-3 border-[var(--color-neo-border)]"
+          title={`Next run: ${parallelCountSetting} agents (${parallelPresetSetting})`}
+        >
+          <Users size={14} className="text-cyan-900" />
+          <span className="font-display font-bold text-xs uppercase text-cyan-900">
+            Next {parallelCountSetting}x {parallelPresetSetting}
+          </span>
+        </div>
+      )}
+
       <div className="flex gap-1">
         {status === 'stopped' || status === 'crashed' ? (
           <>
