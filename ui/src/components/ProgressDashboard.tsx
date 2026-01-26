@@ -7,6 +7,7 @@ interface ProgressDashboardProps {
   percentage: number
   isConnected: boolean
   agentStatus?: AgentStatus
+  agentActivity?: { active: number; total: number } | null
   featureCounts?: {
     staged: number
     pending: number
@@ -24,14 +25,20 @@ export function ProgressDashboard({
   percentage,
   isConnected,
   agentStatus,
+  agentActivity,
   featureCounts,
   onResolveBlockers,
   agentBadge,
 }: ProgressDashboardProps) {
   const pct = total > 0 ? Math.max(0, Math.min(100, percentage)) : 0
 
+  const isIdle =
+    String(agentStatus || '').toLowerCase() === 'running' &&
+    Boolean(agentActivity && agentActivity.total > 0 && agentActivity.active === 0)
+
   const statusText = (() => {
     const s = String(agentStatus || '').toLowerCase()
+    if (isIdle) return 'Idle'
     if (s === 'running') return 'Running'
     if (s === 'paused') return 'Paused'
     if (s === 'crashed') return 'Crashed'
@@ -41,6 +48,7 @@ export function ProgressDashboard({
 
   const statusClass = (() => {
     const s = String(agentStatus || '').toLowerCase()
+    if (isIdle) return 'bg-[var(--color-neo-neutral-200)] text-[var(--color-neo-text)]'
     if (s === 'running') return 'bg-[var(--color-neo-progress)] text-[var(--color-neo-text-on-bright)]'
     if (s === 'paused') return 'bg-yellow-500 text-[var(--color-neo-text)]'
     if (s === 'crashed') return 'bg-[var(--color-neo-danger)] text-white'
