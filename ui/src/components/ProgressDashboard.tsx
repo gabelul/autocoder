@@ -17,6 +17,7 @@ interface ProgressDashboardProps {
   }
   onResolveBlockers?: () => void
   agentBadge?: { text: string; title?: string } | null
+  onAgentBadgeClick?: () => void
 }
 
 export function ProgressDashboard({
@@ -29,6 +30,7 @@ export function ProgressDashboard({
   featureCounts,
   onResolveBlockers,
   agentBadge,
+  onAgentBadgeClick,
 }: ProgressDashboardProps) {
   const pct = total > 0 ? Math.max(0, Math.min(100, percentage)) : 0
 
@@ -113,12 +115,25 @@ export function ProgressDashboard({
               )
             ) : null}
             {agentBadge ? (
-              <span
-                className="neo-badge bg-[var(--color-neo-progress)] text-[var(--color-neo-text-on-bright)]"
-                title={agentBadge.title}
-              >
-                {agentBadge.text}
-              </span>
+              onAgentBadgeClick ? (
+                <button
+                  type="button"
+                  className="neo-badge bg-[var(--color-neo-progress)] text-[var(--color-neo-text-on-bright)] cursor-pointer hover:opacity-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-neo-progress)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-neo-bg)]"
+                  title={agentBadge.title || 'Open worker logs'}
+                  onClick={onAgentBadgeClick}
+                >
+                  <span className="underline decoration-white/70 decoration-dotted underline-offset-2">
+                    {agentBadge.text}
+                  </span>
+                </button>
+              ) : (
+                <span
+                  className="neo-badge bg-[var(--color-neo-progress)] text-[var(--color-neo-text-on-bright)]"
+                  title={agentBadge.title}
+                >
+                  {agentBadge.text}
+                </span>
+              )
             ) : null}
           </div>
         ) : null}
