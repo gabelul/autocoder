@@ -8,6 +8,7 @@
 
 import { useMemo, useState, useEffect } from 'react'
 import { RefreshCw, Trash2, Scissors, Copy } from 'lucide-react'
+import { useAgentStatus } from '../hooks/useProjects'
 import { useDeleteWorkerLog, usePruneWorkerLogs, useWorkerLogTail, useWorkerLogs } from '../hooks/useWorkerLogs'
 
 function formatBytes(bytes: number): string {
@@ -41,6 +42,7 @@ export function WorkerLogsPanel({
   const [dryRun, setDryRun] = useState(true)
   const [includeArtifacts, setIncludeArtifacts] = useState(false)
 
+  const agentStatusQuery = useAgentStatus(projectName)
   const logsQuery = useWorkerLogs(projectName)
   const tailQuery = useWorkerLogTail(projectName, selected, tail)
   const prune = usePruneWorkerLogs(projectName)
@@ -67,11 +69,30 @@ export function WorkerLogsPanel({
   }
 
   return (
-    <div className="h-full overflow-hidden grid grid-cols-1 lg:grid-cols-3 gap-3">
+    <div className="h-full overflow-hidden grid grid-cols-1 lg:grid-cols-[320px_1fr] gap-3">
       {/* File list */}
       <div className="neo-card p-3 overflow-hidden flex flex-col">
-        <div className="flex items-center justify-between mb-2">
-          <div className="font-display font-bold uppercase text-xs">Files</div>
+        <div className="flex items-center justify-between gap-2 mb-2">
+          <div className="min-w-0">
+            <div className="font-display font-bold uppercase text-xs">Worker logs</div>
+            <div className="text-[11px] text-[var(--color-neo-text-secondary)] mt-0.5">
+              {agentStatusQuery.data ? (
+                agentStatusQuery.data.parallel_mode ? (
+                  <>
+                    Parallel • <span className="font-mono">{agentStatusQuery.data.parallel_count}</span> agents •{' '}
+                    <span className="font-mono">{agentStatusQuery.data.model_preset}</span>
+                  </>
+                ) : (
+                  <>
+                    {agentStatusQuery.data.yolo_mode ? 'YOLO' : 'Standard'} •{' '}
+                    <span className="font-mono">{agentStatusQuery.data.status}</span>
+                  </>
+                )
+              ) : (
+                <span className="font-mono">Loading…</span>
+              )}
+            </div>
+          </div>
           <button
             className="neo-btn neo-btn-secondary text-xs py-1.5 px-2.5"
             onClick={() => logsQuery.refetch()}
@@ -111,7 +132,7 @@ export function WorkerLogsPanel({
       </div>
 
       {/* Log tail + prune */}
-      <div className="neo-card p-3 overflow-hidden flex flex-col lg:col-span-2">
+      <div className="neo-card p-3 overflow-hidden flex flex-col min-w-0">
         <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
           <div className="font-display font-bold uppercase text-xs">{selected ? `Tail: ${selected}` : 'Tail'}</div>
           <div className="flex items-center gap-2">
@@ -156,98 +177,122 @@ export function WorkerLogsPanel({
           </div>
         </div>
 
-        {!selected ? (
-          <div className="text-xs text-[var(--color-neo-text-secondary)]">Select a log file to view the last lines.</div>
-        ) : tailQuery.isLoading ? (
-          <div className="text-xs text-[var(--color-neo-text-secondary)]">Loading…</div>
-        ) : (
-          <pre className="neo-card p-2 bg-[var(--color-neo-bg)] overflow-auto text-[11px] font-mono whitespace-pre-wrap flex-1">
-            {selectedText || '(empty)'}
-          </pre>
-        )}
-
-        <div className="neo-card p-3 mt-3 bg-[var(--color-neo-bg)]">
-          <div className="flex items-center justify-between mb-2">
-            <div className="font-display font-bold uppercase text-xs">Prune</div>
-            <button
-              className="neo-btn neo-btn-primary text-xs py-1.5 px-2.5"
-              onClick={async () => {
-                await prune.mutateAsync({
-                  keep_days: keepDays,
-                  keep_files: keepFiles,
-                  max_mb: maxMb,
-                  dry_run: dryRun,
-                  include_artifacts: includeArtifacts,
-                })
-                logsQuery.refetch()
-              }}
-              disabled={prune.isPending}
-              title="Prune logs"
-            >
-              <Scissors size={14} />
-              {dryRun ? 'Dry Run' : 'Prune'}
-            </button>
-          </div>
-
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-            <div>
-              <div className="text-[11px] font-mono text-[var(--color-neo-text-secondary)] mb-1">Keep days</div>
-              <input
-                type="number"
-                min={0}
-                max={3650}
-                value={keepDays}
-                onChange={(e) => setKeepDays(Math.max(0, Math.min(3650, Number(e.target.value) || 0)))}
-                className="neo-btn text-xs py-1.5 px-2 bg-white border-3 border-[var(--color-neo-border)] font-mono w-full"
-              />
+        <div className="flex-1 min-h-0">
+          {!selected ? (
+            <div className="text-xs text-[var(--color-neo-text-secondary)]">
+              Select a log file to view the last lines.
             </div>
-            <div>
-              <div className="text-[11px] font-mono text-[var(--color-neo-text-secondary)] mb-1">Keep files</div>
-              <input
-                type="number"
-                min={0}
-                max={100000}
-                value={keepFiles}
-                onChange={(e) => setKeepFiles(Math.max(0, Math.min(100000, Number(e.target.value) || 0)))}
-                className="neo-btn text-xs py-1.5 px-2 bg-white border-3 border-[var(--color-neo-border)] font-mono w-full"
-              />
-            </div>
-            <div>
-              <div className="text-[11px] font-mono text-[var(--color-neo-text-secondary)] mb-1">Max total (MB)</div>
-              <input
-                type="number"
-                min={0}
-                max={100000}
-                value={maxMb}
-                onChange={(e) => setMaxMb(Math.max(0, Math.min(100000, Number(e.target.value) || 0)))}
-                className="neo-btn text-xs py-1.5 px-2 bg-white border-3 border-[var(--color-neo-border)] font-mono w-full"
-              />
-            </div>
-            <div className="flex items-end">
-              <label className="neo-card p-2 w-full flex items-center justify-between cursor-pointer">
-                <span className="font-display font-bold text-xs">Dry run</span>
-                <input type="checkbox" checked={dryRun} onChange={(e) => setDryRun(e.target.checked)} className="w-4 h-4" />
-              </label>
-            </div>
-            <div className="flex items-end col-span-2 md:col-span-4">
-              <label className="neo-card p-2 w-full flex items-center justify-between cursor-pointer">
-                <span className="font-display font-bold text-xs">Include Gatekeeper artifacts</span>
-                <input
-                  type="checkbox"
-                  checked={includeArtifacts}
-                  onChange={(e) => setIncludeArtifacts(e.target.checked)}
-                  className="w-4 h-4"
-                />
-              </label>
-            </div>
-          </div>
-
-          {prune.data && (
-            <div className="mt-2 text-[11px] font-mono text-[var(--color-neo-text-secondary)]">
-              Deleted {prune.data.deleted_files} files ({formatBytes(prune.data.deleted_bytes)}), kept {prune.data.kept_files} files ({formatBytes(prune.data.kept_bytes)}).
-            </div>
+          ) : tailQuery.isLoading ? (
+            <div className="text-xs text-[var(--color-neo-text-secondary)]">Loading…</div>
+          ) : (
+            <pre className="neo-card p-2 bg-[var(--color-neo-bg)] overflow-auto text-[11px] font-mono whitespace-pre-wrap h-full">
+              {selectedText || '(empty)'}
+            </pre>
           )}
         </div>
+
+        <details className="neo-card p-3 mt-3 bg-[var(--color-neo-bg)]">
+          <summary className="cursor-pointer select-none font-display font-bold uppercase text-xs flex items-center justify-between gap-2">
+            <span className="inline-flex items-center gap-2">
+              <Scissors size={14} />
+              Prune
+            </span>
+            <span className="text-[11px] font-mono text-[var(--color-neo-text-secondary)]">
+              keep {keepDays}d • {keepFiles} files • {maxMb}MB • {dryRun ? 'dry' : 'apply'}
+            </span>
+          </summary>
+
+          <div className="mt-3">
+            <div className="flex items-center justify-between mb-2">
+              <div className="text-[11px] font-mono text-[var(--color-neo-text-secondary)]">
+                Prune logs under <code>.autocoder/logs</code>.
+              </div>
+              <button
+                className="neo-btn neo-btn-primary text-xs py-1.5 px-2.5"
+                onClick={async () => {
+                  await prune.mutateAsync({
+                    keep_days: keepDays,
+                    keep_files: keepFiles,
+                    max_mb: maxMb,
+                    dry_run: dryRun,
+                    include_artifacts: includeArtifacts,
+                  })
+                  logsQuery.refetch()
+                }}
+                disabled={prune.isPending}
+                title="Prune logs"
+              >
+                <Scissors size={14} />
+                {dryRun ? 'Dry Run' : 'Prune'}
+              </button>
+            </div>
+
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+              <div>
+                <div className="text-[11px] font-mono text-[var(--color-neo-text-secondary)] mb-1">Keep days</div>
+                <input
+                  type="number"
+                  min={0}
+                  max={3650}
+                  value={keepDays}
+                  onChange={(e) => setKeepDays(Math.max(0, Math.min(3650, Number(e.target.value) || 0)))}
+                  className="neo-btn text-xs py-1.5 px-2 bg-white border-3 border-[var(--color-neo-border)] font-mono w-full"
+                />
+              </div>
+              <div>
+                <div className="text-[11px] font-mono text-[var(--color-neo-text-secondary)] mb-1">Keep files</div>
+                <input
+                  type="number"
+                  min={0}
+                  max={100000}
+                  value={keepFiles}
+                  onChange={(e) => setKeepFiles(Math.max(0, Math.min(100000, Number(e.target.value) || 0)))}
+                  className="neo-btn text-xs py-1.5 px-2 bg-white border-3 border-[var(--color-neo-border)] font-mono w-full"
+                />
+              </div>
+              <div>
+                <div className="text-[11px] font-mono text-[var(--color-neo-text-secondary)] mb-1">Max total (MB)</div>
+                <input
+                  type="number"
+                  min={0}
+                  max={100000}
+                  value={maxMb}
+                  onChange={(e) => setMaxMb(Math.max(0, Math.min(100000, Number(e.target.value) || 0)))}
+                  className="neo-btn text-xs py-1.5 px-2 bg-white border-3 border-[var(--color-neo-border)] font-mono w-full"
+                />
+              </div>
+              <div className="flex items-end">
+                <label className="neo-card p-2 w-full flex items-center justify-between cursor-pointer">
+                  <span className="font-display font-bold text-xs">Dry run</span>
+                  <input
+                    type="checkbox"
+                    checked={dryRun}
+                    onChange={(e) => setDryRun(e.target.checked)}
+                    className="w-4 h-4"
+                  />
+                </label>
+              </div>
+              <div className="flex items-end col-span-2 md:col-span-4">
+                <label className="neo-card p-2 w-full flex items-center justify-between cursor-pointer">
+                  <span className="font-display font-bold text-xs">Include Gatekeeper artifacts</span>
+                  <input
+                    type="checkbox"
+                    checked={includeArtifacts}
+                    onChange={(e) => setIncludeArtifacts(e.target.checked)}
+                    className="w-4 h-4"
+                  />
+                </label>
+              </div>
+            </div>
+
+            {prune.data && (
+              <div className="mt-2 text-[11px] font-mono text-[var(--color-neo-text-secondary)]">
+                Deleted {prune.data.deleted_files} files ({formatBytes(prune.data.deleted_bytes)}), kept{' '}
+                {prune.data.kept_files} files ({formatBytes(prune.data.kept_bytes)}).
+              </div>
+            )}
+          </div>
+        </details>
       </div>
     </div>
   )
