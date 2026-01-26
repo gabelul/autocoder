@@ -183,6 +183,11 @@ class PruneWorkerLogsResponse(BaseModel):
     kept_bytes: int
 
 
+class DeleteAllWorkerLogsRequest(BaseModel):
+    confirm: str = Field(default="", description='Must be "DELETE_ALL"')
+    include_artifacts: bool = False
+
+
 @router.post("/worker/prune", response_model=PruneWorkerLogsResponse)
 async def prune_worker_logs_endpoint(project_name: str, req: PruneWorkerLogsRequest):
     project_name = _validate_project_name(project_name)
@@ -209,6 +214,40 @@ async def prune_worker_logs_endpoint(project_name: str, req: PruneWorkerLogsRequ
             max_total_mb=req.max_mb,
             dry_run=req.dry_run,
         )
+    return PruneWorkerLogsResponse(
+        deleted_files=logs_result.deleted_files + (artifacts_result.deleted_files if artifacts_result else 0),
+        deleted_bytes=logs_result.deleted_bytes + (artifacts_result.deleted_bytes if artifacts_result else 0),
+        kept_files=logs_result.kept_files + (artifacts_result.kept_files if artifacts_result else 0),
+        kept_bytes=logs_result.kept_bytes + (artifacts_result.kept_bytes if artifacts_result else 0),
+    )
+
+
+@router.post("/worker/delete-all", response_model=PruneWorkerLogsResponse)
+async def delete_all_worker_logs_endpoint(project_name: str, req: DeleteAllWorkerLogsRequest):
+    project_name = _validate_project_name(project_name)
+    project_dir = _get_project_path(project_name).resolve()
+
+    if req.confirm != "DELETE_ALL":
+        raise HTTPException(status_code=400, detail='confirm must be "DELETE_ALL"')
+
+    # Explicit endpoint for destructive cleanup. This avoids overloading prune semantics.
+    logs_result = prune_worker_logs(
+        project_dir,
+        keep_days=1,  # ignored by keep_files=0, but avoids "all zeros" patterns in other paths
+        keep_files=0,
+        max_total_mb=0,
+        dry_run=False,
+    )
+    artifacts_result = None
+    if req.include_artifacts:
+        artifacts_result = prune_gatekeeper_artifacts(
+            project_dir,
+            keep_days=1,
+            keep_files=0,
+            max_total_mb=0,
+            dry_run=False,
+        )
+
     return PruneWorkerLogsResponse(
         deleted_files=logs_result.deleted_files + (artifacts_result.deleted_files if artifacts_result else 0),
         deleted_bytes=logs_result.deleted_bytes + (artifacts_result.deleted_bytes if artifacts_result else 0),

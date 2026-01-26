@@ -356,6 +356,16 @@ export async function pruneWorkerLogs(
   })
 }
 
+export async function deleteAllWorkerLogs(
+  projectName: string,
+  opts: { include_artifacts: boolean }
+): Promise<PruneWorkerLogsResponse> {
+  return fetchJSON(`/projects/${encodeURIComponent(projectName)}/logs/worker/delete-all`, {
+    method: 'POST',
+    body: JSON.stringify({ confirm: 'DELETE_ALL', include_artifacts: Boolean(opts.include_artifacts) }),
+  })
+}
+
 export async function deleteWorkerLog(projectName: string, filename: string): Promise<void> {
   await fetchJSON(`/projects/${encodeURIComponent(projectName)}/logs/worker/${encodeURIComponent(filename)}`, {
     method: 'DELETE',
