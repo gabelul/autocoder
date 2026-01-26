@@ -318,8 +318,19 @@ export function DebugLogViewer({
               className="h-full overflow-y-auto p-2 font-mono text-sm"
             >
               {logs.length === 0 ? (
-                <div className="flex items-center justify-center h-full text-gray-500">
-                  No logs yet. Start the agent to see output.
+                <div className="flex flex-col items-center justify-center h-full text-gray-500 gap-3">
+                  <div>No live logs yet.</div>
+                  <div className="text-xs text-gray-400 text-center max-w-[560px]">
+                    If the agent is already running (especially in parallel mode), most output will be in Worker logs.
+                  </div>
+                  <button
+                    className="neo-btn neo-btn-secondary text-xs py-1.5 px-2.5"
+                    onClick={() => setTab('workers')}
+                    title="Open Worker logs"
+                  >
+                    <FileText size={14} />
+                    Open worker logs
+                  </button>
                 </div>
               ) : (
                 <div className="space-y-0.5">

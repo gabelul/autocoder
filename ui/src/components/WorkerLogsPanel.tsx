@@ -9,7 +9,13 @@
 import { useMemo, useState, useEffect } from 'react'
 import { RefreshCw, Trash2, Scissors, Copy } from 'lucide-react'
 import { useAgentStatus } from '../hooks/useProjects'
-import { useDeleteWorkerLog, usePruneWorkerLogs, useWorkerLogTail, useWorkerLogs } from '../hooks/useWorkerLogs'
+import {
+  useDeleteAllWorkerLogs,
+  useDeleteWorkerLog,
+  usePruneWorkerLogs,
+  useWorkerLogTail,
+  useWorkerLogs,
+} from '../hooks/useWorkerLogs'
 
 function formatBytes(bytes: number): string {
   if (!Number.isFinite(bytes) || bytes < 0) return '0 B'
@@ -41,12 +47,14 @@ export function WorkerLogsPanel({
   const [maxMb, setMaxMb] = useState(200)
   const [dryRun, setDryRun] = useState(true)
   const [includeArtifacts, setIncludeArtifacts] = useState(false)
+  const [confirmDeleteAll, setConfirmDeleteAll] = useState(false)
 
   const agentStatusQuery = useAgentStatus(projectName)
   const logsQuery = useWorkerLogs(projectName)
   const tailQuery = useWorkerLogTail(projectName, selected, tail)
   const prune = usePruneWorkerLogs(projectName)
   const del = useDeleteWorkerLog(projectName)
+  const delAll = useDeleteAllWorkerLogs(projectName)
 
   const selectedText = useMemo(() => (tailQuery.data?.lines ?? []).join('\n'), [tailQuery.data])
   const files = logsQuery.data?.files ?? []
@@ -210,6 +218,7 @@ export function WorkerLogsPanel({
               <button
                 className="neo-btn neo-btn-primary text-xs py-1.5 px-2.5"
                 onClick={async () => {
+                  setConfirmDeleteAll(false)
                   await prune.mutateAsync({
                     keep_days: keepDays,
                     keep_files: keepFiles,
@@ -291,6 +300,56 @@ export function WorkerLogsPanel({
                 {prune.data.kept_files} files ({formatBytes(prune.data.kept_bytes)}).
               </div>
             )}
+
+            <div className="mt-4 border-t border-black/10 pt-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="text-[11px] font-mono text-[var(--color-neo-text-secondary)]">
+                  Need a clean slate? You can delete all worker logs in one go.
+                </div>
+                <button
+                  className="neo-btn neo-btn-danger text-xs py-1.5 px-2.5"
+                  onClick={() => setConfirmDeleteAll(true)}
+                  disabled={delAll.isPending}
+                  title="Delete all worker logs"
+                >
+                  <Trash2 size={14} />
+                  Delete all
+                </button>
+              </div>
+
+              {confirmDeleteAll ? (
+                <div className="neo-card p-3 mt-2 border-3 border-[var(--color-neo-danger)] bg-[var(--color-neo-card)]">
+                  <div className="font-display font-bold uppercase text-xs">Confirm delete all</div>
+                  <div className="text-[11px] text-[var(--color-neo-text-secondary)] mt-1">
+                    This deletes all <code>.log</code> files under <code>.autocoder/logs</code> for this project
+                    {includeArtifacts ? ' (and Gatekeeper artifacts)' : ''}.
+                  </div>
+                  <div className="mt-3 flex items-center gap-2 justify-end">
+                    <button
+                      className="neo-btn neo-btn-secondary text-xs"
+                      onClick={() => setConfirmDeleteAll(false)}
+                      disabled={delAll.isPending}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      className="neo-btn neo-btn-danger text-xs"
+                      onClick={async () => {
+                        await delAll.mutateAsync({ include_artifacts: includeArtifacts })
+                        setConfirmDeleteAll(false)
+                        setSelected(null)
+                        logsQuery.refetch()
+                      }}
+                      disabled={delAll.isPending}
+                      title="Delete all logs now"
+                    >
+                      <Trash2 size={14} />
+                      Delete all now
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+            </div>
           </div>
         </details>
       </div>

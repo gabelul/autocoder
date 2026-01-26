@@ -44,3 +44,12 @@ export function useDeleteWorkerLog(projectName: string) {
   })
 }
 
+export function useDeleteAllWorkerLogs(projectName: string) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (opts: { include_artifacts: boolean }) => api.deleteAllWorkerLogs(projectName, opts),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['worker-logs', projectName] })
+    },
+  })
+}
