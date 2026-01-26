@@ -204,7 +204,7 @@ class TerminalSession:
                     return False
                 assert WinPtyProcess is not None
                 self._pty_process = WinPtyProcess.spawn(
-                    shell,
+                    [shell],
                     cwd=str(self.project_dir),
                     env=os.environ.copy(),
                 )
