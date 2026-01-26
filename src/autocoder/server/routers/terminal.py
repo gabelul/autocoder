@@ -183,7 +183,8 @@ async def terminal_websocket(websocket: WebSocket, project_name: str, terminal_i
         if not started:
             session.remove_output_callback(on_output)
             with contextlib.suppress(Exception):
-                await websocket.send_json({"type": "error", "message": "Failed to start terminal session"})
+                msg = getattr(session, "last_error", None) or "Failed to start terminal session"
+                await websocket.send_json({"type": "error", "message": msg})
             await websocket.close(code=TerminalCloseCode.FAILED_TO_START, reason="Failed to start terminal")
             return
 
