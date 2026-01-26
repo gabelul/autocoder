@@ -455,6 +455,23 @@ function App() {
       : null
   const parallelAgentsQuery = useParallelAgentsStatus(parallelStatusProject)
 
+  const openMostRelevantWorkerLog = () => {
+    const agents = parallelAgentsQuery.data?.agents ?? []
+    if (agents.length === 0) {
+      setLogsTab('workers')
+      setDebugOpen(true)
+      return
+    }
+
+    const mostRelevant = agents.find((a) => a.status === 'ACTIVE') ?? agents[0]
+    const fileFromPath = (mostRelevant.log_file_path || '').split(/[\\/]/).filter(Boolean).pop()
+    const filename = fileFromPath || `${mostRelevant.agent_id}.log`
+
+    setWorkerLogFocus(filename)
+    setLogsTab('workers')
+    setDebugOpen(true)
+  }
+
   const persistRunDefaults = (nextYoloEnabled: boolean, nextRunSettings: RunSettings) => {
     if (!selectedProject) return
     updateProjectRunDefaults.mutate({
@@ -908,6 +925,7 @@ function App() {
                           : null
                       : null
                   }
+                  onAgentBadgeClick={parallelStatusProject ? openMostRelevantWorkerLog : undefined}
                 />
 
                 {selectedProject && isStalledOnBlockers && (
