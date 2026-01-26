@@ -627,7 +627,7 @@ async def _run_claude_patch(repo: Path, *, prompt: str, timeout_s: int) -> tuple
             ),
             cwd=str(repo),
             settings=str(settings_path),
-            max_turns=4,
+            max_turns=8,
             # Do not load user/project Claude settings for workers; only use the explicit sandbox above.
             setting_sources=[],
         )
