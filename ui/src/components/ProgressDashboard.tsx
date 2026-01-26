@@ -1,7 +1,11 @@
 import { AlertTriangle, ChevronRight, Wifi, WifiOff } from 'lucide-react'
 import type { AgentStatus } from '../lib/types'
+import { useState } from 'react'
+import { useGitStatus } from '../hooks/useGit'
+import { GitDirtyModal } from './GitDirtyModal'
 
 interface ProgressDashboardProps {
+  projectName?: string
   passing: number
   total: number
   percentage: number
@@ -22,6 +26,7 @@ interface ProgressDashboardProps {
 }
 
 export function ProgressDashboard({
+  projectName,
   passing,
   total,
   percentage,
@@ -35,6 +40,9 @@ export function ProgressDashboard({
   onAgentBadgeClick,
 }: ProgressDashboardProps) {
   const pct = total > 0 ? Math.max(0, Math.min(100, percentage)) : 0
+  const [showGitDirty, setShowGitDirty] = useState(false)
+  const gitStatusQuery = useGitStatus(projectName || '')
+  const gitDirty = Boolean(projectName && gitStatusQuery.data && !gitStatusQuery.data.is_clean)
 
   const isIdle =
     String(agentStatus || '').toLowerCase() === 'running' &&
@@ -62,6 +70,13 @@ export function ProgressDashboard({
 
   return (
     <div className="neo-card px-4 py-3">
+      {projectName ? (
+        <GitDirtyModal
+          projectName={projectName}
+          isOpen={showGitDirty}
+          onClose={() => setShowGitDirty(false)}
+        />
+      ) : null}
       <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
         <div className="min-w-[260px]">
           <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
@@ -136,6 +151,16 @@ export function ProgressDashboard({
                   {agentBadge.text}
                 </span>
               )
+            ) : null}
+            {gitDirty ? (
+              <button
+                type="button"
+                className="neo-badge bg-[var(--color-neo-danger)] text-white cursor-pointer hover:opacity-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-neo-danger)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-neo-bg)]"
+                title="Git working tree has uncommitted changes; Gatekeeper cannot merge"
+                onClick={() => setShowGitDirty(true)}
+              >
+                Git dirty
+              </button>
             ) : null}
           </div>
         ) : null}

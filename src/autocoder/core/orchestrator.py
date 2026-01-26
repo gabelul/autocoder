@@ -19,49 +19,54 @@ Architecture:
 """
 
 import asyncio
-import os
-import sys
-import logging
-import subprocess
-import shutil
-import json
-import psutil
-import threading
-import socket
 import contextlib
 import errno
-from pathlib import Path
-from typing import Dict, Any, List, Optional, Tuple, Set
+import json
+import logging
+import os
+import shutil
+import socket
+import subprocess
+import sys
+import threading
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from typing import Any
 
-# Direct imports (system code = fast!)
-from .knowledge_base import KnowledgeBase, get_knowledge_base
-from .model_settings import ModelSettings, ModelPreset, get_full_model_id
-from .worktree_manager import WorktreeManager
-from .database import Database, get_database
-from .gatekeeper import Gatekeeper
-from .project_config import load_project_config
-from .engine_settings import load_engine_settings, EngineSettings
-from .logs import prune_worker_logs_from_env, prune_gatekeeper_artifacts_from_env
+import psutil
+
+# Agent imports (for initializer)
+from autocoder.agent import run_autonomous_agent
+from autocoder.agent.prompts import get_app_spec
+from autocoder.generation.feature_backlog import (
+    build_backlog_prompt,
+    infer_feature_count,
+    parse_feature_backlog,
+)
 from autocoder.generation.multi_model import (
     MultiModelGenerateConfig,
     generate_multi_model_artifact,
     generate_multi_model_text,
 )
-from autocoder.generation.feature_backlog import build_backlog_prompt, parse_feature_backlog, infer_feature_count
-
-# Agent imports (for initializer)
-from autocoder.agent import run_autonomous_agent
-from autocoder.agent.prompts import get_app_spec
 
 # MCP server imports (for agents)
-from autocoder.tools import test_mcp, knowledge_mcp, model_settings_mcp, feature_mcp
+from .database import get_database
+from .engine_settings import EngineSettings, load_engine_settings
+from .gatekeeper import Gatekeeper
+
+# Direct imports (system code = fast!)
+from .knowledge_base import get_knowledge_base
+from .logs import prune_gatekeeper_artifacts_from_env, prune_worker_logs_from_env
+from .model_settings import ModelSettings
+from .project_config import load_project_config
+from .worktree_manager import WorktreeManager
 
 logger = logging.getLogger(__name__)
 
 # ============================================================================
 # Port Allocator - Thread-safe port pool management
 # ============================================================================
+
 
 class PortAllocator:
     """
@@ -82,11 +87,11 @@ class PortAllocator:
     def __init__(
         self,
         *,
-        api_port_range: Optional[Tuple[int, int]] = None,
-        web_port_range: Optional[Tuple[int, int]] = None,
+        api_port_range: tuple[int, int] | None = None,
+        web_port_range: tuple[int, int] | None = None,
         bind_host_ipv4: str = "127.0.0.1",
         bind_host_ipv6: str = "::1",
-        verify_availability: Optional[bool] = None,
+        verify_availability: bool | None = None,
     ):
         """Initialize the port allocator with pools and optional bind checks."""
         self._lock = threading.Lock()
@@ -113,22 +118,22 @@ class PortAllocator:
         self._bind_host_ipv6 = bind_host_ipv6
 
         # Track available and in-use ports
-        self._available_api_ports: Set[int] = set(
+        self._available_api_ports: set[int] = set(
             range(self.api_port_range[0], self.api_port_range[1])
         )
-        self._available_web_ports: Set[int] = set(
+        self._available_web_ports: set[int] = set(
             range(self.web_port_range[0], self.web_port_range[1])
         )
 
-        self._in_use_api_ports: Set[int] = set()
-        self._in_use_web_ports: Set[int] = set()
-        self._blocked_api_ports: Set[int] = set()
-        self._blocked_web_ports: Set[int] = set()
+        self._in_use_api_ports: set[int] = set()
+        self._in_use_web_ports: set[int] = set()
+        self._blocked_api_ports: set[int] = set()
+        self._blocked_web_ports: set[int] = set()
 
         # Track which agent owns which ports
-        self._agent_ports: Dict[str, Tuple[int, int]] = {}
+        self._agent_ports: dict[str, tuple[int, int]] = {}
 
-        logger.info(f"PortAllocator initialized:")
+        logger.info("PortAllocator initialized:")
         logger.info(
             f"  API ports: {self.api_port_range[0]}-{self.api_port_range[1]} "
             f"({len(self._available_api_ports)} available)"
@@ -140,7 +145,7 @@ class PortAllocator:
         logger.info(f"  Port availability verification: {self._verify_availability}")
 
     @staticmethod
-    def _range_from_env(start_env: str, end_env: str, default: Tuple[int, int]) -> Tuple[int, int]:
+    def _range_from_env(start_env: str, end_env: str, default: tuple[int, int]) -> tuple[int, int]:
         start_raw = os.environ.get(start_env)
         end_raw = os.environ.get(end_env)
         if not start_raw and not end_raw:
@@ -213,7 +218,7 @@ class PortAllocator:
             self._agent_ports[agent_id] = (api_port, web_port)
             return True
 
-    def allocate_ports(self, agent_id: str) -> Optional[Tuple[int, int]]:
+    def allocate_ports(self, agent_id: str) -> tuple[int, int] | None:
         """
         Allocate a port pair for an agent.
 
@@ -226,15 +231,19 @@ class PortAllocator:
         with self._lock:
             # Check if agent already has ports allocated
             if agent_id in self._agent_ports:
-                logger.warning(f"Agent {agent_id} already has ports allocated: {self._agent_ports[agent_id]}")
+                logger.warning(
+                    f"Agent {agent_id} already has ports allocated: {self._agent_ports[agent_id]}"
+                )
                 return self._agent_ports[agent_id]
 
             # Check if we have available ports
             if not self._available_api_ports or not self._available_web_ports:
-                logger.error(f"No ports available! API: {len(self._available_api_ports)}, Web: {len(self._available_web_ports)}")
+                logger.error(
+                    f"No ports available! API: {len(self._available_api_ports)}, Web: {len(self._available_web_ports)}"
+                )
                 return None
 
-            def pick_port(available: Set[int], blocked: Set[int]) -> Optional[int]:
+            def pick_port(available: set[int], blocked: set[int]) -> int | None:
                 for candidate in sorted(available):
                     if self._port_is_available(candidate):
                         return candidate
@@ -263,7 +272,9 @@ class PortAllocator:
             self._agent_ports[agent_id] = (api_port, web_port)
 
             logger.info(f"Allocated ports for {agent_id}: API={api_port}, WEB={web_port}")
-            logger.info(f"  Available ports: API={len(self._available_api_ports)}, Web={len(self._available_web_ports)}")
+            logger.info(
+                f"  Available ports: API={len(self._available_api_ports)}, Web={len(self._available_web_ports)}"
+            )
 
             return (api_port, web_port)
 
@@ -296,11 +307,13 @@ class PortAllocator:
             del self._agent_ports[agent_id]
 
             logger.info(f"Released ports for {agent_id}: API={api_port}, WEB={web_port}")
-            logger.info(f"  Available ports: API={len(self._available_api_ports)}, Web={len(self._available_web_ports)}")
+            logger.info(
+                f"  Available ports: API={len(self._available_api_ports)}, Web={len(self._available_web_ports)}"
+            )
 
             return True
 
-    def get_agent_ports(self, agent_id: str) -> Optional[Tuple[int, int]]:
+    def get_agent_ports(self, agent_id: str) -> tuple[int, int] | None:
         """
         Get the ports allocated to an agent.
 
@@ -313,7 +326,7 @@ class PortAllocator:
         with self._lock:
             return self._agent_ports.get(agent_id)
 
-    def get_status(self) -> Dict[str, Any]:
+    def get_status(self) -> dict[str, Any]:
         """Get current allocator status."""
         with self._lock:
             return {
@@ -322,19 +335,18 @@ class PortAllocator:
                     "in_use": len(self._in_use_api_ports),
                     "blocked": len(self._blocked_api_ports),
                     "total": self.api_port_range[1] - self.api_port_range[0],
-                    "range": f"{self.api_port_range[0]}-{self.api_port_range[1]}"
+                    "range": f"{self.api_port_range[0]}-{self.api_port_range[1]}",
                 },
                 "web_ports": {
                     "available": len(self._available_web_ports),
                     "in_use": len(self._in_use_web_ports),
                     "blocked": len(self._blocked_web_ports),
                     "total": self.web_port_range[1] - self.web_port_range[0],
-                    "range": f"{self.web_port_range[0]}-{self.web_port_range[1]}"
+                    "range": f"{self.web_port_range[0]}-{self.web_port_range[1]}",
                 },
                 "active_allocations": len(self._agent_ports),
-                "agents": list(self._agent_ports.keys())
+                "agents": list(self._agent_ports.keys()),
             }
-
 
 
 class Orchestrator:
@@ -345,12 +357,7 @@ class Orchestrator:
     Includes port pool allocator for managing parallel agent server ports.
     """
 
-    def __init__(
-        self,
-        project_dir: str,
-        max_agents: int = 3,
-        model_preset: str = "balanced"
-    ):
+    def __init__(self, project_dir: str, max_agents: int = 3, model_preset: str = "balanced"):
         """
         Initialize the orchestrator.
 
@@ -382,9 +389,9 @@ class Orchestrator:
         self.port_allocator = PortAllocator()
         self._bootstrap_ports_from_database()
         port_status = self.port_allocator.get_status()
-        self._last_logs_prune_at: Optional[datetime] = None
-        self._last_dependency_check_at: Optional[datetime] = None
-        self._last_regression_spawn_at: Optional[datetime] = None
+        self._last_logs_prune_at: datetime | None = None
+        self._last_dependency_check_at: datetime | None = None
+        self._last_regression_spawn_at: datetime | None = None
         self._planner_breaker_failures: int = 0
         self._planner_breaker_open_until: datetime | None = None
 
@@ -394,17 +401,23 @@ class Orchestrator:
             try:
                 self.model_settings.set_preset(model_preset)
             except ValueError:
-                logger.warning("Unknown model_preset=%s; falling back to persisted settings", model_preset)
+                logger.warning(
+                    "Unknown model_preset=%s; falling back to persisted settings", model_preset
+                )
         self.available_models = self.model_settings.available_models
 
-        logger.info(f"Orchestrator initialized:")
+        logger.info("Orchestrator initialized:")
         logger.info(f"  Project: {self.project_dir}")
         logger.info(f"  Max agents: {max_agents}")
         logger.info(f"  Model preset: {self.model_settings.preset}")
         logger.info(f"  Available models: {self.available_models}")
-        logger.info(f"  Port pools:")
-        logger.info(f"    API: {port_status['api_ports']['range']} ({port_status['api_ports']['available']} available)")
-        logger.info(f"    Web: {port_status['web_ports']['range']} ({port_status['web_ports']['available']} available)")
+        logger.info("  Port pools:")
+        logger.info(
+            f"    API: {port_status['api_ports']['range']} ({port_status['api_ports']['available']} available)"
+        )
+        logger.info(
+            f"    Web: {port_status['web_ports']['range']} ({port_status['web_ports']['available']} available)"
+        )
 
     @staticmethod
     def _parse_db_timestamp(value: object) -> datetime | None:
@@ -422,7 +435,7 @@ class Orchestrator:
                 return dt.replace(tzinfo=timezone.utc)
         return None
 
-    def _is_expected_worker_process(self, agent_row: Dict[str, Any]) -> bool:
+    def _is_expected_worker_process(self, agent_row: dict[str, Any]) -> bool:
         """
         Guard against PID reuse.
 
@@ -481,7 +494,7 @@ class Orchestrator:
 
         return True
 
-    def _salvage_dead_agent(self, agent_row: Dict[str, Any], *, reason: str) -> None:
+    def _salvage_dead_agent(self, agent_row: dict[str, Any], *, reason: str) -> None:
         """
         Handle an agent row whose PID is missing or not a valid worker process.
 
@@ -494,14 +507,20 @@ class Orchestrator:
         feature_id_raw = agent_row.get("feature_id")
         feature_id = int(feature_id_raw) if feature_id_raw is not None else None
 
-        feature: Dict[str, Any] | None = None
+        feature: dict[str, Any] | None = None
         if feature_id is not None:
             with contextlib.suppress(Exception):
                 feature = self.database.get_feature(feature_id)
 
         # If feature is already ready for Gatekeeper, keep it intact and just mark the agent completed.
-        if feature and feature.get("review_status") == "READY_FOR_VERIFICATION" and feature.get("branch_name"):
-            logger.warning("Dead agent %s had a feature ready for verification; salvaging", agent_id)
+        if (
+            feature
+            and feature.get("review_status") == "READY_FOR_VERIFICATION"
+            and feature.get("branch_name")
+        ):
+            logger.warning(
+                "Dead agent %s had a feature ready for verification; salvaging", agent_id
+            )
             with contextlib.suppress(Exception):
                 self.database.mark_agent_completed(agent_id)
             with contextlib.suppress(Exception):
@@ -632,7 +651,9 @@ class Orchestrator:
                     agent_id,
                     pid,
                 )
-                self._salvage_dead_agent(agent, reason="Agent process missing on orchestrator startup")
+                self._salvage_dead_agent(
+                    agent, reason="Agent process missing on orchestrator startup"
+                )
 
         if reserved:
             logger.info(f"Bootstrapped {reserved} port allocation(s) from database")
@@ -667,7 +688,7 @@ class Orchestrator:
                     project_dir=self.project_dir,
                     model=model,
                     max_iterations=1,  # Only run initializer
-                    yolo_mode=False     # Full testing for initializer
+                    yolo_mode=False,  # Full testing for initializer
                 )
 
             # Verify features were created
@@ -681,7 +702,7 @@ class Orchestrator:
             # Apply staging if the backlog is large
             self._maybe_stage_initializer_backlog(total_features=int(total_features))
 
-            logger.info(f"   ✅ Initializer completed successfully!")
+            logger.info("   ✅ Initializer completed successfully!")
             logger.info(f"   📊 Created {total_features} features")
             return True
 
@@ -745,13 +766,17 @@ class Orchestrator:
         if stage_threshold <= 0 or total_features <= stage_threshold:
             return
 
-        keep = enqueue_count if enqueue_count > 0 else min(stage_threshold, max(1, stage_threshold // 3))
+        keep = (
+            enqueue_count
+            if enqueue_count > 0
+            else min(stage_threshold, max(1, stage_threshold // 3))
+        )
         staged = self.database.stage_features_excluding_top(keep)
         logger.info(
             f"   🧊 Staged {staged} features (threshold={stage_threshold}, kept_enabled={keep})"
         )
 
-    async def run_parallel_agents(self) -> Dict[str, Any]:
+    async def run_parallel_agents(self) -> dict[str, Any]:
         """
         Run multiple agents in parallel until all features are complete.
 
@@ -763,7 +788,6 @@ class Orchestrator:
         logger.info("🚀 Starting parallel agent execution...")
 
         start_time = datetime.now()
-        total_completed = 0
         total_failed = 0
         idle_cycles = 0
 
@@ -797,12 +821,14 @@ class Orchestrator:
                     logger.info("📝 No features found, running initializer agent...")
                     initializer_success = await self._run_initializer()
                     if not initializer_success:
-                        logger.error("❌ Initializer failed, cannot continue with parallel execution")
+                        logger.error(
+                            "❌ Initializer failed, cannot continue with parallel execution"
+                        )
                         return {
                             "duration_seconds": 0,
                             "features_completed": 0,
                             "features_failed": 0,
-                            "error": "Initializer failed"
+                            "error": "Initializer failed",
                         }
                     # Refresh stats after initializer
                     stats = self.database.get_stats()
@@ -829,7 +855,9 @@ class Orchestrator:
                     if self._stop_when_done():
                         logger.info("✅ All features complete!")
                         break
-                    logger.info("✅ Queue empty; waiting for new features (AUTOCODER_STOP_WHEN_DONE=0)")
+                    logger.info(
+                        "✅ Queue empty; waiting for new features (AUTOCODER_STOP_WHEN_DONE=0)"
+                    )
                     await asyncio.sleep(10)
                     continue
 
@@ -861,7 +889,11 @@ class Orchestrator:
                         queue_state = self.database.get_pending_queue_state()
 
                     claimable_now = int((queue_state or {}).get("claimable_now") or 0)
-                    pending_total = int((queue_state or {}).get("pending_total") or stats["features"]["pending"] or 0)
+                    pending_total = int(
+                        (queue_state or {}).get("pending_total")
+                        or stats["features"]["pending"]
+                        or 0
+                    )
 
                     if claimable_now > 0:
                         idle_cycles = 0
@@ -903,7 +935,9 @@ class Orchestrator:
                             if pending_total > 0 and waiting_backoff > 0:
                                 reason.append(f"waiting on retry window ({waiting_backoff})")
                             msg = ", ".join(reason) if reason else "no claimable features"
-                            logger.info(f"⏳ No claimable pending features; sleeping {sleep_s}s ({msg})")
+                            logger.info(
+                                f"⏳ No claimable pending features; sleeping {sleep_s}s ({msg})"
+                            )
 
                         await asyncio.sleep(sleep_s)
                         continue
@@ -929,10 +963,10 @@ class Orchestrator:
             "duration_seconds": duration,
             "features_completed": final_stats["features"]["completed"],
             "features_failed": total_failed,
-            "stats": final_stats
+            "stats": final_stats,
         }
 
-    def _spawn_agents(self, count: int) -> List[str]:
+    def _spawn_agents(self, count: int) -> list[str]:
         """
         Spawn new agents to work on pending features.
 
@@ -973,7 +1007,9 @@ class Orchestrator:
             port_pair = self.port_allocator.allocate_ports(agent_id)
             if not port_pair:
                 logger.error(f"   ❌ Failed to allocate ports for {agent_id}")
-                self.database.mark_feature_failed(feature_id=feature_id, reason="No ports available")
+                self.database.mark_feature_failed(
+                    feature_id=feature_id, reason="No ports available"
+                )
                 continue
 
             api_port, web_port = port_pair
@@ -988,7 +1024,9 @@ class Orchestrator:
                 )
             except Exception as e:
                 logger.error(f"   ❌ Failed to create worktree for {agent_id}: {e}")
-                self.database.mark_feature_failed(feature_id=feature_id, reason="Worktree creation failed")
+                self.database.mark_feature_failed(
+                    feature_id=feature_id, reason="Worktree creation failed"
+                )
                 # Release ports on failure
                 self.port_allocator.release_ports(agent_id)
                 continue
@@ -1090,7 +1128,7 @@ class Orchestrator:
                 env["AUTOCODER_FEATURE_PLAN_PATH"] = str(plan_path)
 
             # Per-agent logs (for debugging and post-mortems)
-            logs_dir = (self.project_dir / ".autocoder" / "logs")
+            logs_dir = self.project_dir / ".autocoder" / "logs"
             logs_dir.mkdir(parents=True, exist_ok=True)
             log_file_path = logs_dir / f"{agent_id}.log"
 
@@ -1100,7 +1138,9 @@ class Orchestrator:
             logger.info(f"🚀 Launching {agent_id}:")
             logger.info(f"   Feature: #{feature_id} - {claimed_feature['name']}")
             if use_patch_chain:
-                logger.info(f"   Engines: {', '.join(worker_engines) if worker_engines else 'none'}")
+                logger.info(
+                    f"   Engines: {', '.join(worker_engines) if worker_engines else 'none'}"
+                )
             else:
                 logger.info(f"   Model: {model.upper()}")
             logger.info(f"   Worktree: {worktree_info['worktree_path']}")
@@ -1139,7 +1179,9 @@ class Orchestrator:
                     log_file_path=str(log_file_path),
                 )
                 with contextlib.suppress(Exception):
-                    self.database.create_branch(claimed_branch, feature_id=feature_id, agent_id=agent_id)
+                    self.database.create_branch(
+                        claimed_branch, feature_id=feature_id, agent_id=agent_id
+                    )
                 with contextlib.suppress(Exception):
                     self.database.add_activity_event(
                         event_type="agent.spawn",
@@ -1172,7 +1214,9 @@ class Orchestrator:
                         data={"error": str(e)},
                     )
                 # Cleanup on failure
-                self.database.mark_feature_failed(feature_id=feature_id, reason="Agent spawn failed")
+                self.database.mark_feature_failed(
+                    feature_id=feature_id, reason="Agent spawn failed"
+                )
                 self.worktree_manager.delete_worktree(agent_id, force=True)
                 self.port_allocator.release_ports(agent_id)
                 continue
@@ -1211,7 +1255,9 @@ class Orchestrator:
                 plan_error = reason
             else:
                 try:
-                    plan_path = self._generate_feature_plan(feature=feature, worktree_path=worktree_path, cfg=cfg)
+                    plan_path = self._generate_feature_plan(
+                        feature=feature, worktree_path=worktree_path, cfg=cfg
+                    )
                     self._planner_breaker_record_success()
                     return plan_path
                 except Exception as e:
@@ -1219,7 +1265,11 @@ class Orchestrator:
                     self._planner_breaker_record_failure()
         else:
             with contextlib.suppress(Exception):
-                until = self._planner_breaker_open_until.isoformat() if self._planner_breaker_open_until else ""
+                until = (
+                    self._planner_breaker_open_until.isoformat()
+                    if self._planner_breaker_open_until
+                    else ""
+                )
                 plan_error = f"planner circuit breaker open{(' until ' + until) if until else ''}"
 
         # If a plan file already exists (from a previous attempt), reuse it for required features.
@@ -1252,7 +1302,9 @@ class Orchestrator:
 
         return None
 
-    def _generate_feature_plan(self, *, feature: dict, worktree_path: Path, cfg: MultiModelGenerateConfig) -> str:
+    def _generate_feature_plan(
+        self, *, feature: dict, worktree_path: Path, cfg: MultiModelGenerateConfig
+    ) -> str:
         """
         Generate a per-feature plan artifact and return its path.
 
@@ -1281,9 +1333,7 @@ class Orchestrator:
             f"Feature #{feature_id}: {feature.get('name')}\n"
             f"Category: {feature.get('category')}\n\n"
             f"Description:\n{feature.get('description')}\n\n"
-            f"Steps:\n"
-            + "\n".join([f"- {s}" for s in (feature.get('steps') or [])])
-            + "\n\n"
+            f"Steps:\n" + "\n".join([f"- {s}" for s in (feature.get("steps") or [])]) + "\n\n"
             "Constraints:\n"
             "- Keep it small and actionable.\n"
             "- Include the verification commands to run.\n"
@@ -1321,7 +1371,11 @@ class Orchestrator:
         lowered = stripped.lower()
         if lowered.startswith("you are synthesizing multiple drafts into one final artifact"):
             return False
-        if "drafts:" in lowered and "user request:" in lowered and "you are synthesizing multiple drafts" in lowered:
+        if (
+            "drafts:" in lowered
+            and "user request:" in lowered
+            and "you are synthesizing multiple drafts" in lowered
+        ):
             return False
 
         return True
@@ -1334,7 +1388,11 @@ class Orchestrator:
     def _engine_settings(self) -> EngineSettings:
         with contextlib.suppress(Exception):
             return load_engine_settings(str(self.project_dir))
-        return self.engine_settings if getattr(self, "engine_settings", None) is not None else EngineSettings.defaults()
+        return (
+            self.engine_settings
+            if getattr(self, "engine_settings", None) is not None
+            else EngineSettings.defaults()
+        )
 
     def _chain_agents(self, stage: str) -> list[str]:
         chain = self._engine_settings().chain_for(stage)  # type: ignore[arg-type]
@@ -1505,7 +1563,9 @@ class Orchestrator:
             synthesizer=effective,  # type: ignore[arg-type]
             timeout_s=self._planner_timeout_s(),
             codex_model=str(os.environ.get("AUTOCODER_CODEX_MODEL", "")).strip(),
-            codex_reasoning_effort=str(os.environ.get("AUTOCODER_CODEX_REASONING_EFFORT", "")).strip(),
+            codex_reasoning_effort=str(
+                os.environ.get("AUTOCODER_CODEX_REASONING_EFFORT", "")
+            ).strip(),
             gemini_model=str(os.environ.get("AUTOCODER_GEMINI_MODEL", "")).strip(),
             claude_model=self._planner_model(),
         )
@@ -1543,10 +1603,14 @@ class Orchestrator:
         self._planner_breaker_failures = int(self._planner_breaker_failures or 0) + 1
         if self._planner_breaker_failures >= threshold:
             cooldown = self._planner_breaker_cooldown_s()
-            self._planner_breaker_open_until = datetime.now(timezone.utc) + timedelta(seconds=cooldown)
+            self._planner_breaker_open_until = datetime.now(timezone.utc) + timedelta(
+                seconds=cooldown
+            )
             self._planner_breaker_failures = 0
 
-    def _write_fallback_feature_plan(self, *, feature: dict, worktree_path: Path, reason: str) -> str | None:
+    def _write_fallback_feature_plan(
+        self, *, feature: dict, worktree_path: Path, reason: str
+    ) -> str | None:
         feature_id = int(feature.get("id") or 0)
         if feature_id <= 0:
             return None
@@ -1574,7 +1638,9 @@ class Orchestrator:
                     continue
                 verify_lines.append(f"- {key}: {spec.command}")
         if not verify_lines:
-            verify_lines.append("- Run the project verification commands (tests/lint/typecheck) and ensure Gatekeeper passes.")
+            verify_lines.append(
+                "- Run the project verification commands (tests/lint/typecheck) and ensure Gatekeeper passes."
+            )
 
         text = (
             "# Feature plan (fallback)\n\n"
@@ -1669,9 +1735,15 @@ class Orchestrator:
         if raw in self.available_models:
             return raw
         # QA is short-lived; default to a fast/strong middle tier.
-        return "sonnet" if "sonnet" in self.available_models else (self.available_models[0] if self.available_models else "opus")
+        return (
+            "sonnet"
+            if "sonnet" in self.available_models
+            else (self.available_models[0] if self.available_models else "opus")
+        )
 
-    def _spawn_qa_subagent(self, *, feature_id: int, feature_name: str, branch_name: str) -> str | None:
+    def _spawn_qa_subagent(
+        self, *, feature_id: int, feature_name: str, branch_name: str
+    ) -> str | None:
         """
         Spawn a short-lived QA fixer worker for a rejected feature branch.
 
@@ -1770,7 +1842,7 @@ class Orchestrator:
         # QA fix prompt injection (used by Claude worker; harmless for CLI fixers).
         env["AUTOCODER_QA_FIX_ENABLED"] = "1"
 
-        logs_dir = (self.project_dir / ".autocoder" / "logs")
+        logs_dir = self.project_dir / ".autocoder" / "logs"
         logs_dir.mkdir(parents=True, exist_ok=True)
         log_file_path = logs_dir / f"{qa_agent_id}.log"
 
@@ -1820,16 +1892,16 @@ class Orchestrator:
                     message=f"QA sub-agent {qa_agent_id} started for feature #{feature_id}",
                     agent_id=qa_agent_id,
                     feature_id=int(feature_id),
-                        data={
-                            "branch": str(branch_name),
-                            "qa_mode": qa_mode,
-                            "engines": qa_engines,
-                            "model": str(model) if not use_patch_chain else "",
-                            "max_iterations": int(max_iterations),
-                            "api_port": int(api_port),
-                            "web_port": int(web_port),
-                        },
-                    )
+                    data={
+                        "branch": str(branch_name),
+                        "qa_mode": qa_mode,
+                        "engines": qa_engines,
+                        "model": str(model) if not use_patch_chain else "",
+                        "max_iterations": int(max_iterations),
+                        "api_port": int(api_port),
+                        "web_port": int(web_port),
+                    },
+                )
             return qa_agent_id
         except Exception as e:
             logger.error(f"   ❌ Failed to spawn QA sub-agent process: {e}")
@@ -1840,7 +1912,12 @@ class Orchestrator:
                     message=f"Failed to spawn QA sub-agent for feature #{feature_id}",
                     agent_id=str(qa_agent_id),
                     feature_id=int(feature_id),
-                    data={"error": str(e), "branch": str(branch_name), "qa_mode": qa_mode, "engines": qa_engines},
+                    data={
+                        "error": str(e),
+                        "branch": str(branch_name),
+                        "qa_mode": qa_mode,
+                        "engines": qa_engines,
+                    },
                 )
             with contextlib.suppress(Exception):
                 self.database.requeue_feature(feature_id, preserve_branch=True)
@@ -1872,7 +1949,11 @@ class Orchestrator:
         raw = str(os.environ.get("AUTOCODER_REGRESSION_POOL_MODEL", "")).strip().lower()
         if raw in self.available_models:
             return raw
-        return "sonnet" if "sonnet" in self.available_models else (self.available_models[0] if self.available_models else "opus")
+        return (
+            "sonnet"
+            if "sonnet" in self.available_models
+            else (self.available_models[0] if self.available_models else "opus")
+        )
 
     def _regression_pool_max_iterations(self) -> int:
         raw = str(os.environ.get("AUTOCODER_REGRESSION_POOL_MAX_ITERATIONS", "")).strip()
@@ -1889,7 +1970,9 @@ class Orchestrator:
             return 0
         return sum(1 for a in agents if str(a.get("agent_id") or "").startswith("regression-"))
 
-    def _maybe_spawn_regression_agents(self, *, available_slots: int, completed_count: int) -> List[str]:
+    def _maybe_spawn_regression_agents(
+        self, *, available_slots: int, completed_count: int
+    ) -> list[str]:
         """
         Opportunistically spawn regression testers when there is spare capacity.
 
@@ -1922,7 +2005,7 @@ class Orchestrator:
             self._last_regression_spawn_at = now
         return spawned
 
-    def _spawn_regression_agents(self, count: int) -> List[str]:
+    def _spawn_regression_agents(self, count: int) -> list[str]:
         """
         Spawn regression tester agents (Claude+Playwright) that do NOT participate in Gatekeeper merges.
 
@@ -1992,7 +2075,7 @@ class Orchestrator:
             env["VITE_PORT"] = str(web_port)
             env.setdefault("AUTOCODER_AGENT_ID", str(agent_id))
 
-            logs_dir = (self.project_dir / ".autocoder" / "logs")
+            logs_dir = self.project_dir / ".autocoder" / "logs"
             logs_dir.mkdir(parents=True, exist_ok=True)
             log_file_path = logs_dir / f"{agent_id}.log"
 
@@ -2075,11 +2158,8 @@ class Orchestrator:
         return "main"
 
     async def run_feature_lifecycle(
-        self,
-        feature_id: int,
-        agent_id: str,
-        model: str
-    ) -> Dict[str, Any]:
+        self, feature_id: int, agent_id: str, model: str
+    ) -> dict[str, Any]:
         """
         Run the complete lifecycle for a single feature.
 
@@ -2105,17 +2185,12 @@ class Orchestrator:
         # Get feature details
         feature = self.database.get_feature(feature_id)
         if not feature:
-            return {
-                "success": False,
-                "error": f"Feature {feature_id} not found"
-            }
+            return {"success": False, "error": f"Feature {feature_id} not found"}
 
         # Step 1: Create worktree
         logger.info(f"📁 Creating worktree for {agent_id}...")
         worktree_info = self.worktree_manager.create_worktree(
-            agent_id=agent_id,
-            feature_id=feature_id,
-            feature_name=feature["name"]
+            agent_id=agent_id, feature_id=feature_id, feature_name=feature["name"]
         )
 
         worktree_path = worktree_info["worktree_path"]
@@ -2137,9 +2212,7 @@ class Orchestrator:
         try:
             # Simulate agent working
             await self._simulate_agent_work(
-                worktree_path=worktree_path,
-                feature=feature,
-                model=model
+                worktree_path=worktree_path, feature=feature, model=model
             )
 
             # Step 4: Submit to Gatekeeper
@@ -2159,7 +2232,7 @@ class Orchestrator:
                     "success": True,
                     "feature_id": feature_id,
                     "agent_id": agent_id,
-                    "verification": verification
+                    "verification": verification,
                 }
             else:
                 logger.warning(f"❌ Feature rejected: {verification['reason']}")
@@ -2173,7 +2246,7 @@ class Orchestrator:
                     "success": False,
                     "feature_id": feature_id,
                     "agent_id": agent_id,
-                    "verification": verification
+                    "verification": verification,
                 }
 
         except Exception as e:
@@ -2182,7 +2255,7 @@ class Orchestrator:
                 "success": False,
                 "feature_id": feature_id,
                 "agent_id": agent_id,
-                "error": str(e)
+                "error": str(e),
             }
 
         finally:
@@ -2191,7 +2264,7 @@ class Orchestrator:
             self.worktree_manager.delete_worktree(agent_id, force=True)
             self.database.unregister_agent(agent_id)
 
-    def _select_model_for_feature(self, feature: Dict[str, Any]) -> str:
+    def _select_model_for_feature(self, feature: dict[str, Any]) -> str:
         """
         Select the best model for a feature using knowledge base.
 
@@ -2231,19 +2304,14 @@ class Orchestrator:
             "frontend": "opus",
             "testing": "haiku",
             "documentation": "haiku",
-            "infrastructure": "opus"
+            "infrastructure": "opus",
         }
 
         recommended = category_mapping.get(category, "sonnet")
         logger.info(f"   Category mapping recommends: {recommended}")
         return recommended
 
-    async def _simulate_agent_work(
-        self,
-        worktree_path: str,
-        feature: Dict[str, Any],
-        model: str
-    ):
+    async def _simulate_agent_work(self, worktree_path: str, feature: dict[str, Any], model: str):
         """
         Simulate agent working on a feature.
 
@@ -2265,11 +2333,10 @@ class Orchestrator:
 
         # Simulate checkpoint
         self.worktree_manager.commit_checkpoint(
-            agent_id="simulation",
-            message="Initial implementation"
+            agent_id="simulation", message="Initial implementation"
         )
 
-        logger.info(f"   ✅ Agent completed work (simulated)")
+        logger.info("   ✅ Agent completed work (simulated)")
 
     def _recover_crashed_agents(self):
         """
@@ -2339,7 +2406,9 @@ class Orchestrator:
                     )
 
                     if needs_verification:
-                        logger.info(f"🧪 Gatekeeper verifying feature #{feature_id} ({branch_name})...")
+                        logger.info(
+                            f"🧪 Gatekeeper verifying feature #{feature_id} ({branch_name})..."
+                        )
                         with contextlib.suppress(Exception):
                             self.database.add_activity_event(
                                 event_type="gatekeeper.verify",
@@ -2405,7 +2474,9 @@ class Orchestrator:
                                         feature_id=int(feature_id),
                                         data={
                                             "reason": str(pre.get("reason") or "").strip(),
-                                            "artifact_path": str(pre.get("artifact_path") or "").strip(),
+                                            "artifact_path": str(
+                                                pre.get("artifact_path") or ""
+                                            ).strip(),
                                             "excerpt": excerpt[:2000],
                                         },
                                     )
@@ -2447,7 +2518,9 @@ class Orchestrator:
                                     feature_id=int(feature_id),
                                     data={
                                         "branch": str(branch_name),
-                                        "merge_commit": str(verification.get("merge_commit") or "").strip(),
+                                        "merge_commit": str(
+                                            verification.get("merge_commit") or ""
+                                        ).strip(),
                                     },
                                 )
                             self.database.mark_feature_passing(feature_id)
@@ -2457,7 +2530,9 @@ class Orchestrator:
                                     self.database.mark_branch_merged(branch_name, merge_commit)
                         else:
                             reason = verification.get("reason") or "Gatekeeper rejected feature"
-                            logger.warning(f"❌ Gatekeeper rejected feature #{feature_id}: {reason}")
+                            logger.warning(
+                                f"❌ Gatekeeper rejected feature #{feature_id}: {reason}"
+                            )
                             excerpt = self._format_gatekeeper_failure_excerpt(verification)
                             with contextlib.suppress(Exception):
                                 self.database.add_activity_event(
@@ -2468,7 +2543,9 @@ class Orchestrator:
                                     feature_id=int(feature_id),
                                     data={
                                         "reason": str(reason).strip(),
-                                        "artifact_path": str(verification.get("artifact_path") or "").strip(),
+                                        "artifact_path": str(
+                                            verification.get("artifact_path") or ""
+                                        ).strip(),
                                         "excerpt": excerpt[:2000],
                                     },
                                 )
@@ -2481,9 +2558,15 @@ class Orchestrator:
                                 artifact_path=verification.get("artifact_path"),
                                 diff_fingerprint=verification.get("diff_fingerprint"),
                             )
-                    elif assigned_agent == agent_id and not passes and review_status == "READY_FOR_VERIFICATION":
+                    elif (
+                        assigned_agent == agent_id
+                        and not passes
+                        and review_status == "READY_FOR_VERIFICATION"
+                    ):
                         # READY but missing branch_name is unrecoverable; requeue.
-                        logger.warning(f"Feature #{feature_id} ready for verification but missing branch_name; requeuing")
+                        logger.warning(
+                            f"Feature #{feature_id} ready for verification but missing branch_name; requeuing"
+                        )
                         self.database.mark_feature_failed(
                             feature_id=feature_id,
                             reason="Missing branch_name for verification",
@@ -2532,7 +2615,12 @@ class Orchestrator:
                 logger.info(
                     f"Pruned worker logs: deleted_files={result.deleted_files}, deleted_bytes={result.deleted_bytes}"
                 )
-            if str(os.environ.get("AUTOCODER_LOGS_PRUNE_ARTIFACTS", "")).strip().lower() in {"1", "true", "yes", "on"}:
+            if str(os.environ.get("AUTOCODER_LOGS_PRUNE_ARTIFACTS", "")).strip().lower() in {
+                "1",
+                "true",
+                "yes",
+                "on",
+            }:
                 a = prune_gatekeeper_artifacts_from_env(self.project_dir)
                 if a.deleted_files:
                     logger.info(
@@ -2543,7 +2631,10 @@ class Orchestrator:
                 keep_rows_raw = str(os.environ.get("AUTOCODER_ACTIVITY_KEEP_ROWS", "")).strip()
                 keep_days = int(keep_days_raw) if keep_days_raw else 14
                 keep_rows = int(keep_rows_raw) if keep_rows_raw else 5000
-                deleted = int(self.database.prune_activity_events(keep_days=keep_days, keep_rows=keep_rows) or 0)
+                deleted = int(
+                    self.database.prune_activity_events(keep_days=keep_days, keep_rows=keep_rows)
+                    or 0
+                )
                 if deleted:
                     logger.info(f"Pruned activity events: deleted={deleted}")
             except Exception:
@@ -2554,18 +2645,23 @@ class Orchestrator:
     def _block_unresolvable_dependencies_if_needed(self) -> None:
         # Default: once per minute.
         now = datetime.now()
-        if self._last_dependency_check_at and (now - self._last_dependency_check_at) < timedelta(seconds=60):
+        if self._last_dependency_check_at and (now - self._last_dependency_check_at) < timedelta(
+            seconds=60
+        ):
             return
         self._last_dependency_check_at = now
         n = int(self.database.block_unresolvable_dependencies() or 0)
         if n > 0:
-            logger.warning(f"Dependency health check: blocked {n} feature(s) due to unresolvable dependencies")
+            logger.warning(
+                f"Dependency health check: blocked {n} feature(s) due to unresolvable dependencies"
+            )
 
     @staticmethod
     def _format_gatekeeper_failure_excerpt(verification: dict) -> str:
         """
         Build a concise, actionable error excerpt for retrying agents and UI display.
         """
+
         def _first_text(obj: object, limit: int) -> str:
             s = str(obj or "")
             s = s.replace("\r\n", "\n").strip()
@@ -2575,10 +2671,13 @@ class Orchestrator:
 
         reason = str(verification.get("reason") or "Gatekeeper rejected feature").strip()
         artifact_path = str(verification.get("artifact_path") or "").strip()
+        details = str(verification.get("details") or "").strip()
 
         lines: list[str] = [f"Gatekeeper rejected: {reason}"]
         if artifact_path:
             lines.append(f"Artifact: {artifact_path}")
+        if details:
+            lines.append("Details:\n" + _first_text(details, 1200))
 
         # Prefer deterministic verification command failures.
         ver = verification.get("verification")
@@ -2667,14 +2766,18 @@ class Orchestrator:
                         feature_id=feature_id,
                         reason=excerpt,
                         artifact_path=str(artifact_path) if artifact_path is not None else None,
-                        diff_fingerprint=str(diff_fingerprint) if diff_fingerprint is not None else None,
+                        diff_fingerprint=(
+                            str(diff_fingerprint) if diff_fingerprint is not None else None
+                        ),
                         preserve_branch=True,
                         next_status="IN_PROGRESS",
                     )
                     failure_recorded = True
                     refreshed = self.database.get_feature(int(feature_id)) or {}
                     if str(refreshed.get("status") or "").upper() == "BLOCKED":
-                        logger.info(f"Feature #{feature_id} is BLOCKED; skipping QA sub-agent spawn")
+                        logger.info(
+                            f"Feature #{feature_id} is BLOCKED; skipping QA sub-agent spawn"
+                        )
                     else:
                         qa_id = self._spawn_qa_subagent(
                             feature_id=int(feature_id),
@@ -2694,7 +2797,7 @@ class Orchestrator:
                 diff_fingerprint=str(diff_fingerprint) if diff_fingerprint is not None else None,
             )
 
-    def get_status(self) -> Dict[str, Any]:
+    def get_status(self) -> dict[str, Any]:
         """Get current orchestrator status."""
         stats = self.database.get_stats()
         progress = self.database.get_progress()
@@ -2709,7 +2812,7 @@ class Orchestrator:
             "progress": progress,
             "active_agents": stats["agents"]["active"],
             "ports": port_status,
-            "timestamp": datetime.now().isoformat()
+            "timestamp": datetime.now().isoformat(),
         }
 
 
@@ -2717,10 +2820,9 @@ class Orchestrator:
 # Convenience Functions
 # ============================================================================
 
+
 def create_orchestrator(
-    project_dir: str,
-    max_agents: int = 3,
-    model_preset: str = "balanced"
+    project_dir: str, max_agents: int = 3, model_preset: str = "balanced"
 ) -> Orchestrator:
     """
     Create an orchestrator instance.
@@ -2733,11 +2835,7 @@ def create_orchestrator(
     Returns:
         Orchestrator instance
     """
-    return Orchestrator(
-        project_dir=project_dir,
-        max_agents=max_agents,
-        model_preset=model_preset
-    )
+    return Orchestrator(project_dir=project_dir, max_agents=max_agents, model_preset=model_preset)
 
 
 async def main():
@@ -2748,40 +2846,27 @@ async def main():
         description="Orchestrator - Run parallel autonomous coding agents"
     )
     parser.add_argument(
-        "--project-dir",
-        default=".",
-        help="Path to project directory (default: current directory)"
+        "--project-dir", default=".", help="Path to project directory (default: current directory)"
     )
     parser.add_argument(
-        "--parallel",
-        type=int,
-        default=3,
-        help="Number of parallel agents (default: 3)"
+        "--parallel", type=int, default=3, help="Number of parallel agents (default: 3)"
     )
     parser.add_argument(
         "--preset",
         default="balanced",
         choices=["quality", "balanced", "economy", "cheap", "experimental"],
-        help="Model preset (default: balanced)"
+        help="Model preset (default: balanced)",
     )
+    parser.add_argument("--show-status", action="store_true", help="Show current status and exit")
     parser.add_argument(
-        "--show-status",
-        action="store_true",
-        help="Show current status and exit"
-    )
-    parser.add_argument(
-        "--show-ports",
-        action="store_true",
-        help="Show port allocation status and exit"
+        "--show-ports", action="store_true", help="Show port allocation status and exit"
     )
 
     args = parser.parse_args()
 
     # Create orchestrator
     orchestrator = create_orchestrator(
-        project_dir=args.project_dir,
-        max_agents=args.parallel,
-        model_preset=args.preset
+        project_dir=args.project_dir, max_agents=args.parallel, model_preset=args.preset
     )
 
     # Show port status?
@@ -2791,17 +2876,17 @@ async def main():
         print("PORT ALLOCATION STATUS")
         print("=" * 60)
         ports = status["ports"]
-        print(f"\nAPI Ports:")
+        print("\nAPI Ports:")
         print(f"  Range: {ports['api_ports']['range']}")
         print(f"  Available: {ports['api_ports']['available']}")
         print(f"  In Use: {ports['api_ports']['in_use']}")
-        print(f"\nWeb Ports:")
+        print("\nWeb Ports:")
         print(f"  Range: {ports['web_ports']['range']}")
         print(f"  Available: {ports['web_ports']['available']}")
         print(f"  In Use: {ports['web_ports']['in_use']}")
         print(f"\nActive Allocations: {ports['active_allocations']}")
         if ports["agents"]:
-            print(f"Agents with ports:")
+            print("Agents with ports:")
             for agent in ports["agents"]:
                 p = orchestrator.port_allocator.get_agent_ports(agent)
                 if not p:
@@ -2821,10 +2906,12 @@ async def main():
         print(f"Max Agents: {status['max_agents']}")
         print(f"Model Preset: {status['model_preset']}")
         print(f"Available Models: {', '.join(status['available_models'])}")
-        print(f"\nProgress: {status['progress']['passing']}/{status['progress']['total']} ({status['progress']['percentage']}%)")
+        print(
+            f"\nProgress: {status['progress']['passing']}/{status['progress']['total']} ({status['progress']['percentage']}%)"
+        )
         print(f"Active Agents: {status['active_agents']}")
         ports = status["ports"]
-        print(f"\nPort Usage:")
+        print("\nPort Usage:")
         print(f"  API: {ports['api_ports']['in_use']}/{ports['api_ports']['total']}")
         print(f"  Web: {ports['web_ports']['in_use']}/{ports['web_ports']['total']}")
         print("=" * 60)

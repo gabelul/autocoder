@@ -29,18 +29,18 @@ logger = logging.getLogger(__name__)
 
 # Patterns for sensitive data that should be redacted from output
 SENSITIVE_PATTERNS = [
-    r'sk-[a-zA-Z0-9]{20,}',  # Anthropic API keys
-    r'ANTHROPIC_API_KEY=[^\s]+',
-    r'api[_-]?key[=:][^\s]+',
-    r'token[=:][^\s]+',
-    r'password[=:][^\s]+',
-    r'secret[=:][^\s]+',
-    r'ghp_[a-zA-Z0-9]{36,}',  # GitHub personal access tokens
-    r'gho_[a-zA-Z0-9]{36,}',  # GitHub OAuth tokens
-    r'ghs_[a-zA-Z0-9]{36,}',  # GitHub server tokens
-    r'ghr_[a-zA-Z0-9]{36,}',  # GitHub refresh tokens
-    r'aws[_-]?access[_-]?key[=:][^\s]+',  # AWS keys
-    r'aws[_-]?secret[=:][^\s]+',
+    r"sk-[a-zA-Z0-9]{20,}",  # Anthropic API keys
+    r"ANTHROPIC_API_KEY=[^\s]+",
+    r"api[_-]?key[=:][^\s]+",
+    r"token[=:][^\s]+",
+    r"password[=:][^\s]+",
+    r"secret[=:][^\s]+",
+    r"ghp_[a-zA-Z0-9]{36,}",  # GitHub personal access tokens
+    r"gho_[a-zA-Z0-9]{36,}",  # GitHub OAuth tokens
+    r"ghs_[a-zA-Z0-9]{36,}",  # GitHub server tokens
+    r"ghr_[a-zA-Z0-9]{36,}",  # GitHub refresh tokens
+    r"aws[_-]?access[_-]?key[=:][^\s]+",  # AWS keys
+    r"aws[_-]?secret[=:][^\s]+",
 ]
 
 # Patterns for Claude CLI / API authentication failures.
@@ -66,7 +66,7 @@ AUTH_ERROR_HELP = (
 def sanitize_output(line: str) -> str:
     """Remove sensitive information from output lines."""
     for pattern in SENSITIVE_PATTERNS:
-        line = re.sub(pattern, '[REDACTED]', line, flags=re.IGNORECASE)
+        line = re.sub(pattern, "[REDACTED]", line, flags=re.IGNORECASE)
     return line
 
 
@@ -193,7 +193,9 @@ class AgentProcessManager:
             return None
 
         try:
-            pid, stored_create_time = self._parse_lock_content(self.lock_file.read_text(encoding="utf-8"))
+            pid, stored_create_time = self._parse_lock_content(
+                self.lock_file.read_text(encoding="utf-8")
+            )
         except (ValueError, OSError):
             self.lock_file.unlink(missing_ok=True)
             return None
@@ -375,7 +377,9 @@ class AgentProcessManager:
             create_time = None
 
         lock_content = (
-            f"{self.process.pid}:{create_time}" if create_time is not None else str(self.process.pid)
+            f"{self.process.pid}:{create_time}"
+            if create_time is not None
+            else str(self.process.pid)
         )
 
         try:
@@ -448,9 +452,7 @@ class AgentProcessManager:
             loop = asyncio.get_running_loop()
             while True:
                 # Use run_in_executor for blocking readline
-                line = await loop.run_in_executor(
-                    None, self.process.stdout.readline
-                )
+                line = await loop.run_in_executor(None, self.process.stdout.readline)
                 if not line:
                     break
 
@@ -494,7 +496,7 @@ class AgentProcessManager:
         yolo_mode: bool = False,
         parallel_mode: bool = False,
         parallel_count: int = 3,
-        model_preset: str = "balanced"
+        model_preset: str = "balanced",
     ) -> tuple[bool, str]:
         """
         Start the agent as a subprocess.
@@ -508,6 +510,8 @@ class AgentProcessManager:
         Returns:
             Tuple of (success, message)
         """
+        # Ensure we don't report a stale "running" state after UI/server restarts.
+        await self.healthcheck()
         if self.status in ("running", "paused"):
             return False, f"Agent is already {self.status}"
 
@@ -558,9 +562,7 @@ class AgentProcessManager:
             # Persisted settings override env, but only when explicitly saved.
             env = apply_advanced_settings_env(env)
             # Apply project-scoped runtime overrides (wins over global advanced defaults).
-            env = apply_project_runtime_settings_env(
-                self.project_dir, env, override_existing=True
-            )
+            env = apply_project_runtime_settings_env(self.project_dir, env, override_existing=True)
 
             # Start subprocess with piped stdout/stderr
             # Use project_dir as cwd so Claude SDK sandbox allows access to project files

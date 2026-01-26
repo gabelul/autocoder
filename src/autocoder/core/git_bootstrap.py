@@ -16,7 +16,6 @@ import shutil
 import subprocess
 from pathlib import Path
 
-
 _DEFAULT_GITIGNORE_LINES = [
     "",
     "# Common local / build artifacts",
@@ -49,6 +48,8 @@ _DEFAULT_GITIGNORE_LINES = [
     "# AutoCoder runtime artifacts",
     ".autocoder/",
     "worktrees/",
+    ".playwright-mcp/",
+    "*.pid",
     ".agent.lock",
     ".progress_cache",
     "agent_system.db",
@@ -140,7 +141,10 @@ def ensure_git_repo_for_parallel(project_dir: Path) -> tuple[bool, str]:
         if proc.returncode != 0:
             proc = _run_git(["git", "init"], cwd=project_dir)
         if proc.returncode != 0:
-            return False, f"git init failed: {(proc.stderr or proc.stdout).strip() or 'unknown error'}"
+            return (
+                False,
+                f"git init failed: {(proc.stderr or proc.stdout).strip() or 'unknown error'}",
+            )
 
     # If HEAD exists already, we are good (don't touch user repo further).
     if _git_has_head(project_dir):
@@ -162,9 +166,14 @@ def ensure_git_repo_for_parallel(project_dir: Path) -> tuple[bool, str]:
         joined = (commit.stderr or commit.stdout or "").strip()
         # If there is nothing to commit, allow an empty initial commit so HEAD exists.
         if "nothing to commit" in joined.lower():
-            commit2 = _run_git(["git", "commit", "--no-gpg-sign", "--allow-empty", "-m", "init"], cwd=project_dir)
+            commit2 = _run_git(
+                ["git", "commit", "--no-gpg-sign", "--allow-empty", "-m", "init"], cwd=project_dir
+            )
             if commit2.returncode != 0:
-                return False, f"git commit failed: {(commit2.stderr or commit2.stdout).strip() or 'unknown error'}"
+                return (
+                    False,
+                    f"git commit failed: {(commit2.stderr or commit2.stdout).strip() or 'unknown error'}",
+                )
         else:
             return False, f"git commit failed: {joined or 'unknown error'}"
 

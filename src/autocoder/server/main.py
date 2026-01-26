@@ -8,60 +8,62 @@ Provides REST API, WebSocket, and static file serving.
 
 import asyncio
 import mimetypes
-import shutil
 import os
+import shutil
 import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, Request, WebSocket, HTTPException
+from fastapi import FastAPI, HTTPException, Request, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.staticfiles import StaticFiles
 
-# Fix MIME types for JavaScript files on Windows
-mimetypes.add_type("application/javascript", ".js")
-mimetypes.add_type("text/css", ".css")
+from autocoder.core.cli_defaults import get_codex_cli_defaults
+from autocoder.core.port_config import get_ui_allow_remote, get_ui_cors_origins, get_ui_port
 
+from .routers import (
+    activity_router,
+    agent_router,
+    assistant_chat_router,
+    devserver_router,
+    diagnostics_router,
+    engine_settings_router,
+    expand_project_router,
+    features_router,
+    filesystem_router,
+    generate_router,
+    git_router,
+    logs_router,
+    model_settings_router,
+    parallel_router,
+    project_config_router,
+    project_settings_router,
+    projects_router,
+    settings_router,
+    spec_creation_router,
+    terminal_router,
+    version_router,
+    worktrees_router,
+)
+from .routers.devserver import devserver_websocket
+from .routers.terminal import terminal_websocket
+from .schemas import SetupStatus
+from .services.assistant_chat_session import cleanup_all_sessions as cleanup_assistant_sessions
+from .services.dev_server_manager import cleanup_all_dev_servers
+from .services.expand_chat_session import cleanup_all_expand_sessions
+from .services.process_manager import cleanup_all_managers
+from .services.scheduler import cleanup_schedules, restore_schedules
+from .services.terminal_manager import cleanup_all_terminals
+from .websocket import project_websocket
+
+# Configure default event loop policy early on Windows.
 if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
 
-from .routers import (
-    projects_router,
-    features_router,
-    agent_router,
-    spec_creation_router,
-    expand_project_router,
-    filesystem_router,
-    assistant_chat_router,
-    model_settings_router,
-    logs_router,
-    activity_router,
-    parallel_router,
-    settings_router,
-    engine_settings_router,
-    project_settings_router,
-    generate_router,
-    project_config_router,
-    diagnostics_router,
-    worktrees_router,
-    devserver_router,
-    terminal_router,
-    version_router,
-)
-from .websocket import project_websocket
-from .services.process_manager import cleanup_all_managers
-from .services.assistant_chat_session import cleanup_all_sessions as cleanup_assistant_sessions
-from .services.expand_chat_session import cleanup_all_expand_sessions
-from .services.dev_server_manager import cleanup_all_dev_servers
-from .services.scheduler import restore_schedules, cleanup_schedules
-from .routers.devserver import devserver_websocket
-from .services.terminal_manager import cleanup_all_terminals
-from .routers.terminal import terminal_websocket
-from .schemas import SetupStatus
-from autocoder.core.cli_defaults import get_codex_cli_defaults
-from autocoder.core.port_config import get_ui_port, get_ui_cors_origins, get_ui_allow_remote
-
+# Fix MIME types for JavaScript files on Windows.
+mimetypes.add_type("application/javascript", ".js")
+mimetypes.add_type("text/css", ".css")
 
 # Paths
 ROOT_DIR = Path(__file__).resolve().parent.parent
@@ -127,6 +129,7 @@ app.add_middleware(
 # Security Middleware
 # ============================================================================
 
+
 @app.middleware("http")
 async def require_localhost(request: Request, call_next):
     """Only allow requests from localhost."""
@@ -166,11 +169,13 @@ app.include_router(worktrees_router)
 app.include_router(devserver_router)
 app.include_router(terminal_router)
 app.include_router(version_router)
+app.include_router(git_router)
 
 
 # ============================================================================
 # WebSocket Endpoint
 # ============================================================================
+
 
 @app.websocket("/ws/projects/{project_name}")
 async def websocket_endpoint(websocket: WebSocket, project_name: str):
@@ -194,6 +199,7 @@ async def terminal_ws_endpoint(websocket: WebSocket, project_name: str, terminal
 # Setup & Health Endpoints
 # ============================================================================
 
+
 @app.get("/api/health")
 async def health_check():
     """Health check endpoint."""
@@ -204,7 +210,9 @@ async def health_check():
 async def setup_status():
     """Check system setup status."""
     # Check for Claude CLI (allow override; defaults to "claude")
-    cli_command = (os.environ.get("AUTOCODER_CLI_COMMAND") or os.environ.get("CLI_COMMAND") or "claude").strip()
+    cli_command = (
+        os.environ.get("AUTOCODER_CLI_COMMAND") or os.environ.get("CLI_COMMAND") or "claude"
+    ).strip()
     claude_cli = shutil.which(cli_command) is not None
 
     # Claude Code CLI auth storage varies by version/platform:
@@ -282,7 +290,9 @@ if UI_DIST_DIR and UI_DIST_DIR.exists():
 
         # Fall back to index.html for SPA routing
         return FileResponse(UI_DIST_DIR / "index.html", headers=_ui_index_headers())
+
 else:
+
     @app.get("/")
     async def missing_ui_build():
         """
@@ -328,7 +338,9 @@ npm -C ui run dev</pre>
 
 if __name__ == "__main__":
     import uvicorn
+
     from autocoder.core.port_config import get_ui_host
+
     uvicorn.run(
         "autocoder.server.main:app",
         host=get_ui_host(),

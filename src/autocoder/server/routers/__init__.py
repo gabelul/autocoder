@@ -5,27 +5,28 @@ API Routers
 FastAPI routers for different API endpoints.
 """
 
-from .projects import router as projects_router
-from .features import router as features_router
-from .agent import router as agent_router
-from .spec_creation import router as spec_creation_router
-from .filesystem import router as filesystem_router
-from .assistant_chat import router as assistant_chat_router
-from .model_settings import router as model_settings_router
-from .logs import router as logs_router
 from .activity import router as activity_router
-from .parallel import router as parallel_router
-from .settings import router as settings_router
-from .engine_settings import router as engine_settings_router
-from .project_settings import router as project_settings_router
-from .generate import router as generate_router
-from .project_config import router as project_config_router
-from .diagnostics import router as diagnostics_router
-from .worktrees import router as worktrees_router
-from .expand_project import router as expand_project_router
+from .agent import router as agent_router
+from .assistant_chat import router as assistant_chat_router
 from .devserver import router as devserver_router
+from .diagnostics import router as diagnostics_router
+from .engine_settings import router as engine_settings_router
+from .expand_project import router as expand_project_router
+from .features import router as features_router
+from .filesystem import router as filesystem_router
+from .generate import router as generate_router
+from .git import router as git_router
+from .logs import router as logs_router
+from .model_settings import router as model_settings_router
+from .parallel import router as parallel_router
+from .project_config import router as project_config_router
+from .project_settings import router as project_settings_router
+from .projects import router as projects_router
+from .settings import router as settings_router
+from .spec_creation import router as spec_creation_router
 from .terminal import router as terminal_router
 from .version import router as version_router
+from .worktrees import router as worktrees_router
 
 __all__ = [
     "projects_router",
@@ -49,4 +50,5 @@ __all__ = [
     "devserver_router",
     "terminal_router",
     "version_router",
+    "git_router",
 ]

@@ -2,6 +2,7 @@ import { Play, Pause, Square, Loader2, Zap, Users, AlertTriangle, X } from 'luci
 import { useMemo, useState } from 'react'
 import { useStartAgent, useStopAgent, usePauseAgent, useResumeAgent } from '../hooks/useProjects'
 import type { AgentStatus } from '../lib/types'
+import { GitDirtyModal } from './GitDirtyModal'
 
 export type RunMode = 'standard' | 'parallel'
 export type ParallelPreset = 'quality' | 'balanced' | 'economy' | 'cheap' | 'experimental' | 'custom'
@@ -48,6 +49,7 @@ export function AgentControl({
   const pauseAgent = usePauseAgent(projectName)
   const resumeAgent = useResumeAgent(projectName)
   const [lastError, setLastError] = useState<string | null>(null)
+  const [showGitDirty, setShowGitDirty] = useState(false)
 
   const isLoading = startAgent.isPending || stopAgent.isPending || pauseAgent.isPending || resumeAgent.isPending
   const startDisabled = Boolean(isLoading || setupRequired)
@@ -61,6 +63,12 @@ export function AgentControl({
     setLastError(null)
 
     const onError = (e: unknown) => {
+      const anyErr: any = e as any
+      const detail = anyErr?.detail
+      if (detail && typeof detail === 'object' && (detail as any).error === 'git_dirty') {
+        setShowGitDirty(true)
+        return
+      }
       const msg = e instanceof Error ? e.message : String(e)
       setLastError(msg)
     }
@@ -114,6 +122,17 @@ export function AgentControl({
   return (
     <div className="relative flex items-center gap-2">
       <StatusIndicator status={status} />
+
+      <GitDirtyModal
+        projectName={projectName}
+        isOpen={showGitDirty}
+        onClose={() => setShowGitDirty(false)}
+        onAfterStash={async () => {
+          // After stashing, immediately retry the start with the same settings.
+          setShowGitDirty(false)
+          handleStart()
+        }}
+      />
 
       {(status === 'running' || status === 'paused') && (
         <>
