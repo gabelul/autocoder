@@ -91,6 +91,8 @@ async def get_parallel_agents(project_name: str, limit: int = 50):
 
     with db.get_connection() as conn:
         cursor = conn.cursor()
+        cursor.execute("SELECT COUNT(1) FROM agent_heartbeats WHERE status = 'ACTIVE'")
+        active_count = int(cursor.fetchone()[0] or 0)
         cursor.execute(
             """
             SELECT
@@ -129,7 +131,6 @@ async def get_parallel_agents(project_name: str, limit: int = 50):
         for row in rows
     ]
 
-    active_count = sum(1 for a in agents if a.status == "ACTIVE")
     return ParallelAgentsStatusResponse(
         is_running=active_count > 0,
         active_count=active_count,
