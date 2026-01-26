@@ -15,6 +15,7 @@ interface ProgressDashboardProps {
     blocked: number
   }
   onResolveBlockers?: () => void
+  agentBadge?: { text: string; title?: string } | null
 }
 
 export function ProgressDashboard({
@@ -25,6 +26,7 @@ export function ProgressDashboard({
   agentStatus,
   featureCounts,
   onResolveBlockers,
+  agentBadge,
 }: ProgressDashboardProps) {
   const pct = total > 0 ? Math.max(0, Math.min(100, percentage)) : 0
 
@@ -101,6 +103,14 @@ export function ProgressDashboard({
                   Blocked {featureCounts.blocked}
                 </span>
               )
+            ) : null}
+            {agentBadge ? (
+              <span
+                className="neo-badge bg-[var(--color-neo-progress)] text-[var(--color-neo-text-on-bright)]"
+                title={agentBadge.title}
+              >
+                {agentBadge.text}
+              </span>
             ) : null}
           </div>
         ) : null}

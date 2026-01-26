@@ -14,6 +14,7 @@ import { useFeatureSound } from './hooks/useFeatureSound'
 import { useCelebration } from './hooks/useCelebration'
 import { useAdvancedSettings } from './hooks/useAdvancedSettings'
 import { useBlockersSummary } from './hooks/useBlockers'
+import { useParallelAgentsStatus } from './hooks/useParallelAgents'
 
 import { ProjectSelector } from './components/ProjectSelector'
 import { KanbanBoard } from './components/KanbanBoard'
@@ -448,6 +449,12 @@ function App() {
 
   const blockersSummaryQuery = useBlockersSummary(selectedProject || '')
 
+  const parallelStatusProject =
+    selectedProject && ((agentStatusData?.parallel_mode ?? false) || runSettings.mode === 'parallel')
+      ? selectedProject
+      : null
+  const parallelAgentsQuery = useParallelAgentsStatus(parallelStatusProject)
+
   const persistRunDefaults = (nextYoloEnabled: boolean, nextRunSettings: RunSettings) => {
     if (!selectedProject) return
     updateProjectRunDefaults.mutate({
@@ -878,6 +885,21 @@ function App() {
                   agentStatus={wsState.agentStatus}
                   featureCounts={featureCounts}
                   onResolveBlockers={blockedNow > 0 ? () => setShowResolveBlockers(true) : undefined}
+                  agentBadge={
+                    parallelStatusProject
+                      ? (agentStatusData?.parallel_mode ?? false)
+                        ? {
+                            text: `Agents ${parallelAgentsQuery.data?.active_count ?? 0}/${agentStatusData?.parallel_count ?? 0}`,
+                            title: 'Parallel agent workers currently active',
+                          }
+                        : !setupRequired && !yoloEnabled && runSettings.mode === 'parallel'
+                          ? {
+                              text: `Next ${runSettings.parallelCount}x ${runSettings.parallelPreset}`,
+                              title: 'Next run will start in parallel mode',
+                            }
+                          : null
+                      : null
+                  }
                 />
 
                 {selectedProject && isStalledOnBlockers && (
