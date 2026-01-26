@@ -573,6 +573,15 @@ function App() {
                     projectName={selectedProject}
                     status={wsState.agentStatus}
                     setupRequired={setupRequired}
+                    onOpenLogs={() => {
+                      setLogsTab('activity')
+                      setDebugOpen(true)
+                    }}
+                    onForceStandardMode={() => {
+                      const nextRun = { ...runSettings, mode: 'standard' as const }
+                      setRunSettings(nextRun)
+                      persistRunDefaults(yoloEnabled, nextRun)
+                    }}
                     yoloMode={agentStatusData?.yolo_mode ?? false}
                     parallelMode={agentStatusData?.parallel_mode ?? false}
                     parallelCount={agentStatusData?.parallel_count ?? null}
