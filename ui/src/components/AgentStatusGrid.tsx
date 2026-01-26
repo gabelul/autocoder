@@ -31,22 +31,31 @@ export function AgentStatusGrid({ projectName, onViewLogs }: AgentStatusGridProp
   const agents = status?.agents ?? []
   const activeAgents = agents.filter((a) => a.status === 'ACTIVE')
 
-  if (!status || activeAgents.length === 0) {
+  if (!status || agents.length === 0) {
     return null
   }
 
   const completedCount = agents.filter((a) => a.status === 'COMPLETED').length
   const crashedCount = agents.filter((a) => a.status === 'CRASHED').length
 
+  const showAgents = activeAgents.length > 0 ? activeAgents : agents.slice(0, 6)
+  const subtitle =
+    activeAgents.length > 0
+      ? `Running ${activeAgents.length} agent(s)`
+      : `Last run (${agents.length} agent(s) recorded)`
+
   return (
     <div className="neo-card p-6">
       <div className="flex items-center gap-3 mb-4">
         <Bot className="text-[var(--color-neo-accent)]" size={28} />
-        <h2 className="font-display text-xl font-bold uppercase">Agent Status</h2>
+        <div className="min-w-0">
+          <h2 className="font-display text-xl font-bold uppercase">Agent Status</h2>
+          <div className="text-xs text-[var(--color-neo-text-secondary)] mt-1">{subtitle}</div>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 mb-6">
-        {activeAgents.map((agent) => (
+        {showAgents.map((agent) => (
           <AgentCard key={agent.agent_id} agent={agent} projectName={projectName} onViewLogs={onViewLogs} />
         ))}
       </div>
@@ -119,6 +128,15 @@ function AgentCard({
             label: 'Done',
             subtitle: 'All good.',
           }
+        : agent.status === 'CRASHED'
+          ? {
+              bgColor: 'bg-[var(--color-neo-danger)]/10',
+              borderColor: 'border-[var(--color-neo-danger)]',
+              textColor: 'text-[var(--color-neo-danger)]',
+              badge: 'CRASH',
+              label: 'Crashed',
+              subtitle: 'Needs attention.',
+            }
         : {
             bgColor: 'bg-[var(--color-agent-retry)]/10',
             borderColor: 'border-[var(--color-agent-retry)]',
@@ -126,7 +144,7 @@ function AgentCard({
             badge: 'RETRY',
             label: 'Trying plan B...',
             subtitle: 'Recovering.',
-          }
+        }
 
   return (
     <div className={`neo-card p-4 ${config.bgColor} ${config.borderColor}`}>
