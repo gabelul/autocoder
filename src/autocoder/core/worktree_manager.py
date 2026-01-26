@@ -17,16 +17,15 @@ Disk Space: Worktrees share the .git directory, so overhead is minimal
 (only the working files are duplicated, not the git history)
 """
 
-import os
-import subprocess
-import shutil
 import json
-import stat
-import time
-from pathlib import Path
-from datetime import datetime
-from typing import Optional
 import logging
+import os
+import shutil
+import stat
+import subprocess
+import time
+from datetime import datetime
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +33,7 @@ logger = logging.getLogger(__name__)
 class WorktreeManager:
     """Manages git worktrees for parallel agent isolation."""
 
-    def __init__(self, project_dir: str, worktrees_base_dir: Optional[str] = None):
+    def __init__(self, project_dir: str, worktrees_base_dir: str | None = None):
         """
         Initialize the worktree manager.
 
@@ -179,9 +178,9 @@ class WorktreeManager:
     def create_worktree(
         self,
         agent_id: str,
-        feature_id: Optional[int] = None,
-        feature_name: Optional[str] = None,
-        branch_name: Optional[str] = None,
+        feature_id: int | None = None,
+        feature_name: str | None = None,
+        branch_name: str | None = None,
     ) -> dict | str:
         """
         Create a new isolated worktree for an agent.
@@ -227,6 +226,12 @@ class WorktreeManager:
         if worktree_path.exists():
             logger.warning(f"Worktree already exists, removing: {worktree_path}")
             self.delete_worktree(agent_id, force=True)
+            if worktree_path.exists():
+                # On Windows, file locks can prevent deletion. Don't proceed with `git worktree add`
+                # because it will fail with confusing/partial stderr. Surface a clear message.
+                raise RuntimeError(
+                    f"Worktree path still exists after cleanup (likely locked): {worktree_path}"
+                )
 
         # Create the worktree
         logger.info(f"Creating worktree: {worktree_path}")
@@ -245,7 +250,7 @@ class WorktreeManager:
                 return False
 
         # Prefer creating feature branches from main/master rather than whatever the repo is currently on.
-        base_ref: Optional[str] = None
+        base_ref: str | None = None
         for candidate in ("main", "master"):
             try:
                 subprocess.run(
@@ -260,6 +265,16 @@ class WorktreeManager:
                 continue
 
         try:
+            # Prune stale worktree metadata (e.g., after crashes) before trying to add a new one.
+            # This avoids "branch is already checked out at ..." false-positives.
+            subprocess.run(
+                ["git", "worktree", "prune"],
+                cwd=self.project_dir,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+
             # Git worktree add command:
             # - If branch already exists, attach worktree to it (resume).
             # - Otherwise, create a new branch from base_ref.
@@ -270,27 +285,30 @@ class WorktreeManager:
                 cmd.extend(["-b", branch_name])
                 if base_ref:
                     cmd.append(base_ref)
-            subprocess.run(
-                cmd,
-                cwd=self.project_dir,
-                check=True,
-                capture_output=True,
-                text=True
-            )
+            subprocess.run(cmd, cwd=self.project_dir, check=True, capture_output=True, text=True)
 
-            logger.info(f"✅ Worktree created successfully")
+            logger.info("✅ Worktree created successfully")
 
             result = {
                 "worktree_path": str(worktree_path),
                 "branch_name": branch_name,
                 "relative_path": worktree_path.relative_to(self.project_dir.parent),
-                "created_at": datetime.now().isoformat()
+                "created_at": datetime.now().isoformat(),
             }
 
             return result["worktree_path"] if legacy_return_path_only else result
 
         except subprocess.CalledProcessError as e:
-            logger.error(f"Failed to create worktree: {e.stderr}")
+            stdout = (e.stdout or "").strip()
+            stderr = (e.stderr or "").strip()
+            msg = stderr or stdout or str(e)
+            logger.error(
+                "Failed to create worktree (returncode=%s): %s\nstdout:\n%s\nstderr:\n%s",
+                getattr(e, "returncode", None),
+                msg,
+                stdout,
+                stderr,
+            )
             raise
 
     def delete_worktree(self, agent_id: str, force: bool = False) -> bool:
@@ -330,7 +348,7 @@ class WorktreeManager:
                 cwd=self.project_dir,
                 check=True,
                 capture_output=True,
-                text=True
+                text=True,
             )
 
             # Force delete directory if git command failed
@@ -341,13 +359,15 @@ class WorktreeManager:
                         self._rmtree_force(worktree_path)
                     except Exception as e:
                         logger.warning(f"Deferred cleanup for locked worktree: {e}")
-                        self._enqueue_cleanup(worktree_path, reason="force-delete failed after git worktree remove")
+                        self._enqueue_cleanup(
+                            worktree_path, reason="force-delete failed after git worktree remove"
+                        )
                         return True
                 else:
-                    logger.error(f"Directory still exists after git worktree remove")
+                    logger.error("Directory still exists after git worktree remove")
                     return False
 
-            logger.info(f"✅ Worktree deleted successfully")
+            logger.info("✅ Worktree deleted successfully")
             return True
 
         except subprocess.CalledProcessError as e:
@@ -362,7 +382,7 @@ class WorktreeManager:
                         ["git", "worktree", "prune"],
                         cwd=self.project_dir,
                         check=True,
-                        capture_output=True
+                        capture_output=True,
                     )
                     # Delete directory
                     if worktree_path.exists():
@@ -370,7 +390,9 @@ class WorktreeManager:
                             self._rmtree_force(worktree_path)
                         except Exception as cleanup_error:
                             logger.warning(f"Deferred cleanup for locked worktree: {cleanup_error}")
-                            self._enqueue_cleanup(worktree_path, reason="force-cleanup failed after prune")
+                            self._enqueue_cleanup(
+                                worktree_path, reason="force-cleanup failed after prune"
+                            )
                             return True
                     logger.info("✅ Force cleanup successful")
                     return True
@@ -399,7 +421,7 @@ class WorktreeManager:
                 cwd=self.project_dir,
                 check=True,
                 capture_output=True,
-                text=True
+                text=True,
             )
 
             worktrees = []
@@ -428,7 +450,7 @@ class WorktreeManager:
             logger.error(f"Failed to list worktrees: {e.stderr}")
             return []
 
-    def get_worktree_path(self, agent_id: str) -> Optional[Path]:
+    def get_worktree_path(self, agent_id: str) -> Path | None:
         """
         Get the worktree path for a specific agent.
 
@@ -468,7 +490,7 @@ class WorktreeManager:
                 cwd=worktree_path,
                 check=True,
                 capture_output=True,
-                text=True
+                text=True,
             )
 
             # Empty output = clean
@@ -477,12 +499,7 @@ class WorktreeManager:
         except subprocess.CalledProcessError:
             return False
 
-    def commit_checkpoint(
-        self,
-        agent_id: str,
-        message: str,
-        allow_dirty: bool = False
-    ) -> bool:
+    def commit_checkpoint(self, agent_id: str, message: str, allow_dirty: bool = False) -> bool:
         """
         Create a checkpoint commit in the agent's worktree.
 
@@ -505,12 +522,7 @@ class WorktreeManager:
 
         try:
             # Add all changes
-            subprocess.run(
-                ["git", "add", "-A"],
-                cwd=worktree_path,
-                check=True,
-                capture_output=True
-            )
+            subprocess.run(["git", "add", "-A"], cwd=worktree_path, check=True, capture_output=True)
 
             # Commit
             commit_message = f"Checkpoint: {message}"
@@ -520,7 +532,7 @@ class WorktreeManager:
                 cwd=worktree_path,
                 check=True,
                 capture_output=True,
-                text=True
+                text=True,
             )
 
             logger.info(f"✅ Checkpoint committed in {agent_id}: {message}")
@@ -562,7 +574,7 @@ class WorktreeManager:
                 cwd=worktree_path,
                 check=True,
                 capture_output=True,
-                text=True
+                text=True,
             )
 
             logger.info(f"✅ Rolled back {agent_id} by {steps} checkpoint(s)")
@@ -598,7 +610,7 @@ class WorktreeManager:
                 cwd=worktree_path,
                 check=True,
                 capture_output=True,
-                text=True
+                text=True,
             )
 
             logger.info(f"✅ Branch pushed: {branch_name}")
@@ -621,24 +633,14 @@ def test_worktree_manager():
         # Initialize git repo
         subprocess.run(["git", "init"], cwd=test_repo, check=True)
         subprocess.run(
-            ["git", "config", "user.email", "test@example.com"],
-            cwd=test_repo,
-            check=True
+            ["git", "config", "user.email", "test@example.com"], cwd=test_repo, check=True
         )
-        subprocess.run(
-            ["git", "config", "user.name", "Test User"],
-            cwd=test_repo,
-            check=True
-        )
+        subprocess.run(["git", "config", "user.name", "Test User"], cwd=test_repo, check=True)
 
         # Create initial commit
         (test_repo / "README.md").write_text("# Test Repo\n")
         subprocess.run(["git", "add", "."], cwd=test_repo, check=True)
-        subprocess.run(
-            ["git", "commit", "-m", "Initial commit"],
-            cwd=test_repo,
-            check=True
-        )
+        subprocess.run(["git", "commit", "-m", "Initial commit"], cwd=test_repo, check=True)
 
         # Test worktree manager
         manager = WorktreeManager(str(test_repo))

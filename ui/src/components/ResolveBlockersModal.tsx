@@ -199,6 +199,7 @@ export function ResolveBlockersModal({
               {groups.map((g) => {
                 const badge = kindBadge(g.kind)
                 const depIds = (g.depends_on ?? []).map((d) => d.id)
+                const exampleId = g.example_feature?.id
                 return (
                   <div key={g.key} className="neo-card p-4">
                     <div className="flex items-start justify-between gap-3">
@@ -233,6 +234,15 @@ export function ResolveBlockersModal({
                             title="Retry this group"
                           >
                             Retry
+                          </button>
+                        ) : null}
+                        {typeof exampleId === 'number' && onOpenFeature ? (
+                          <button
+                            className="neo-btn neo-btn-secondary text-xs"
+                            onClick={() => onOpenFeature(exampleId)}
+                            title="Open an example feature from this blocker group"
+                          >
+                            Open example
                           </button>
                         ) : null}
                         {g.kind === 'dependency' && depIds.length > 0 && onOpenFeature ? (

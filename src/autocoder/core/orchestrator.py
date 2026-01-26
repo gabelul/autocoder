@@ -1023,10 +1023,32 @@ class Orchestrator:
                     branch_name=claimed_branch,
                 )
             except Exception as e:
-                logger.error(f"   ❌ Failed to create worktree for {agent_id}: {e}")
-                self.database.mark_feature_failed(
-                    feature_id=feature_id, reason="Worktree creation failed"
-                )
+                detail = ""
+                with contextlib.suppress(Exception):
+                    if isinstance(e, subprocess.CalledProcessError):
+                        stdout = str(getattr(e, "stdout", "") or "").strip()
+                        stderr = str(getattr(e, "stderr", "") or "").strip()
+                        detail = stderr or stdout
+                if not detail:
+                    detail = str(e).strip()
+
+                logger.error(f"   ❌ Failed to create worktree for {agent_id}: {detail or e}")
+                with contextlib.suppress(Exception):
+                    self.database.add_activity_event(
+                        event_type="worktree.create_failed",
+                        level="ERROR",
+                        message=f"Failed to create worktree for {agent_id} (feature #{feature_id})",
+                        agent_id=agent_id,
+                        feature_id=int(feature_id),
+                        data={
+                            "error": str(detail or e),
+                            "branch": str(claimed_branch),
+                        },
+                    )
+                reason = "Worktree creation failed"
+                if detail:
+                    reason = reason + "\n" + detail
+                self.database.mark_feature_failed(feature_id=feature_id, reason=reason)
                 # Release ports on failure
                 self.port_allocator.release_ports(agent_id)
                 continue
