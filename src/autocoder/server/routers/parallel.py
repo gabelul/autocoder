@@ -18,7 +18,6 @@ from pydantic import BaseModel
 
 from autocoder.core.database import get_database
 
-
 router = APIRouter(prefix="/api/projects/{project_name}/parallel", tags=["parallel"])
 
 
@@ -55,6 +54,28 @@ class ParallelAgentsStatusResponse(BaseModel):
     is_running: bool
     active_count: int
     agents: list[ParallelAgentInfo]
+
+
+class _QueueStateFeatureRef(BaseModel):
+    id: int
+    name: str
+    next_attempt_at: str | None = None
+
+
+class _QueueStateDepRef(BaseModel):
+    id: int
+    name: str
+
+
+class ParallelQueueStateResponse(BaseModel):
+    pending_total: int
+    claimable_now: int
+    waiting_backoff: int
+    waiting_deps: int
+    staged_total: int
+    earliest_next_attempt_at: str | None = None
+    earliest_retry_feature: _QueueStateFeatureRef | None = None
+    example_dep_blocked_feature: _QueueStateDepRef | None = None
 
 
 @router.get("/agents", response_model=ParallelAgentsStatusResponse)
@@ -114,3 +135,16 @@ async def get_parallel_agents(project_name: str, limit: int = 50):
         active_count=active_count,
         agents=agents,
     )
+
+
+@router.get("/queue-state", response_model=ParallelQueueStateResponse)
+async def get_parallel_queue_state(project_name: str):
+    project_name = _validate_project_name(project_name)
+    project_dir = _get_project_path(project_name).resolve()
+
+    if not project_dir.exists():
+        raise HTTPException(status_code=404, detail="Project directory not found")
+
+    db = get_database(str(project_dir))
+    state = db.get_pending_queue_state() or {}
+    return ParallelQueueStateResponse(**state)

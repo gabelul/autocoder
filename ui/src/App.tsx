@@ -14,7 +14,7 @@ import { useFeatureSound } from './hooks/useFeatureSound'
 import { useCelebration } from './hooks/useCelebration'
 import { useAdvancedSettings } from './hooks/useAdvancedSettings'
 import { useBlockersSummary } from './hooks/useBlockers'
-import { useParallelAgentsStatus } from './hooks/useParallelAgents'
+import { useParallelAgentsStatus, useParallelQueueState } from './hooks/useParallelAgents'
 
 import { ProjectSelector } from './components/ProjectSelector'
 import { KanbanBoard } from './components/KanbanBoard'
@@ -454,6 +454,32 @@ function App() {
       ? selectedProject
       : null
   const parallelAgentsQuery = useParallelAgentsStatus(parallelStatusProject)
+  const parallelQueueStateQuery = useParallelQueueState(parallelStatusProject)
+
+  const idleDetail = useMemo(() => {
+    if (!parallelStatusProject) return null
+    if (String(wsState.agentStatus || '').toLowerCase() !== 'running') return null
+    if (!agentStatusData?.parallel_mode) return null
+    if ((parallelAgentsQuery.data?.active_count ?? 0) > 0) return null
+
+    const qs = parallelQueueStateQuery.data
+    if (!qs) return null
+
+    const parts: string[] = []
+    if (qs.waiting_deps > 0) parts.push(`deps ${qs.waiting_deps}`)
+    if (qs.waiting_backoff > 0) parts.push(`retry ${qs.waiting_backoff}`)
+
+    const base = parts.length > 0 ? `Waiting: ${parts.join(', ')}` : qs.pending_total > 0 ? 'No claimable work' : null
+    if (!base) return null
+
+    return qs.earliest_next_attempt_at ? `${base} (next: ${qs.earliest_next_attempt_at})` : base
+  }, [
+    parallelStatusProject,
+    wsState.agentStatus,
+    agentStatusData?.parallel_mode,
+    parallelAgentsQuery.data?.active_count,
+    parallelQueueStateQuery.data,
+  ])
 
   const openMostRelevantWorkerLog = () => {
     const agents = parallelAgentsQuery.data?.agents ?? []
@@ -908,6 +934,7 @@ function App() {
                         }
                       : null
                   }
+                  idleDetail={idleDetail}
                   featureCounts={featureCounts}
                   onResolveBlockers={blockedNow > 0 ? () => setShowResolveBlockers(true) : undefined}
                   agentBadge={
