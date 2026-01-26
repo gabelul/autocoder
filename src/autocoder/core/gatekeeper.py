@@ -16,25 +16,28 @@ Architecture Note:
 - Deterministic logic (no AI needed)
 """
 
-import os
-import subprocess
-import logging
 import contextlib
-import json
-import shutil
-import sys
 import hashlib
-from pathlib import Path
-from typing import Dict, Any, Optional
+import json
+import logging
+import os
+import shutil
+import subprocess
+import sys
 from datetime import datetime
+from pathlib import Path
+from typing import Any
+
+from autocoder.core.engine_settings import load_engine_settings
+from autocoder.reviewers.base import ReviewConfig
+from autocoder.reviewers.factory import get_reviewer
+
+from .git_dirty import get_git_dirty_status
+from .project_config import infer_preset, load_project_config, synthesize_commands_from_preset
 
 # Direct imports (system code = fast!)
 from .test_framework_detector import TestFrameworkDetector
 from .worktree_manager import WorktreeManager
-from .project_config import load_project_config, infer_preset, synthesize_commands_from_preset
-from autocoder.reviewers.base import ReviewConfig
-from autocoder.reviewers.factory import get_reviewer
-from autocoder.core.engine_settings import load_engine_settings
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +56,9 @@ class Gatekeeper:
         return raw not in {"", "0", "false", "no", "off"}
 
     @staticmethod
-    def _apply_allow_no_tests(test_results: Dict[str, Any], *, allow_no_tests: bool) -> Dict[str, Any]:
+    def _apply_allow_no_tests(
+        test_results: dict[str, Any], *, allow_no_tests: bool
+    ) -> dict[str, Any]:
         """
         YOLO-only escape hatch when a project has no test command/script.
 
@@ -74,7 +79,7 @@ class Gatekeeper:
         combined = (str(out.get("output", "")) + str(out.get("errors", ""))).lower()
 
         # npm: Missing script: "test"
-        if "npm" in cmd and "missing script" in combined and "\"test\"" in combined:
+        if "npm" in cmd and "missing script" in combined and '"test"' in combined:
             out["passed"] = True
             out["note"] = "No test script detected; allowed by configuration (YOLO mode)"
             return out
@@ -125,16 +130,16 @@ class Gatekeeper:
     def verify_and_merge(
         self,
         branch_name: str,
-        worktree_path: Optional[str] = None,
-        agent_id: Optional[str] = None,
+        worktree_path: str | None = None,
+        agent_id: str | None = None,
         *,
         feature_id: int | None = None,
-        main_branch: Optional[str] = None,
+        main_branch: str | None = None,
         fetch_remote: bool = False,
         push_remote: bool = False,
         allow_no_tests: bool = False,
         delete_feature_branch: bool = True,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Verify a feature branch and merge to main if tests pass.
 
@@ -171,9 +176,9 @@ class Gatekeeper:
         temp_worktree_path = None
         verify_branch = None
         approved = False
-        test_results: Dict[str, Any] | None = None
-        verification: Dict[str, Any] = {}
-        review: Dict[str, Any] | None = None
+        test_results: dict[str, Any] | None = None
+        verification: dict[str, Any] = {}
+        review: dict[str, Any] | None = None
 
         def detect_main_branch() -> str:
             if main_branch:
@@ -217,76 +222,19 @@ class Gatekeeper:
             except subprocess.CalledProcessError:
                 return False
 
-        def _git_porcelain() -> list[str]:
-            raw = subprocess.run(
-                ["git", "status", "--porcelain"],
-                cwd=self.project_dir,
-                capture_output=True,
-                text=True,
-            ).stdout
-            lines = [ln for ln in raw.splitlines() if ln.strip()]
-            return lines
+        # Note: git dirty detection is shared between Gatekeeper and server preflight.
+        # See: autocoder.core.git_dirty
 
-        def _split_dirty(lines: list[str]) -> tuple[list[str], list[str]]:
-            # Ignore runtime/build artifacts that the orchestrator/UI creates in the main tree.
-            ignore_substrings = [
-                ".autocoder/",
-                "worktrees/",
-                "agent_system.db",
-                ".eslintrc.json",
-            ]
-            ignore_untracked_filenames = {
-                # Claude Code CLI can leave these behind in the target project root.
-                # They are not part of the user's repo and shouldn't block deterministic merges.
-                ".claude_settings.json",
-                "claude-progress.txt",
-            }
-            ignored: list[str] = []
-            remaining: list[str] = []
-            for ln in lines:
-                target = ln.replace("\\", "/")
-                status = ln[:2]
-                path_part = ln[3:] if len(ln) > 3 else ""
-                # Handle renames like: "R  old -> new"
-                if "->" in path_part:
-                    path_part = path_part.split("->", 1)[-1].strip()
-                filename = path_part.replace("\\", "/").split("/")[-1] if path_part else ""
-
-                # Ignore known runtime artifacts (any status).
-                if any(s in target for s in ignore_substrings):
-                    ignored.append(ln)
-                # Ignore known Claude CLI artifacts only when untracked.
-                elif status == "??" and filename in ignore_untracked_filenames:
-                    ignored.append(ln)
-                # Claude CLI sometimes drops a redundant root-level app_spec.txt even when prompts/app_spec.txt exists.
-                # Treat it as an artifact only in that case, and only when untracked.
-                elif (
-                    status == "??"
-                    and filename == "app_spec.txt"
-                    and (self.project_dir / "prompts" / "app_spec.txt").exists()
-                ):
-                    ignored.append(ln)
-                # AutoCoder prompt scaffolding files are often left untracked in the target project.
-                # They are not part of the feature code and should not block merges.
-                elif status == "??":
-                    rel = path_part.replace("\\", "/")
-                    if rel == "prompts/" or rel == "prompts":
-                        ignored.append(ln)
-                    elif rel.startswith("prompts/"):
-                        rel_name = rel.split("/")[-1] if rel else ""
-                        # Defensive: only ignore the known AutoCoder prompt filenames.
-                        if rel_name == "app_spec.txt" or rel_name.endswith("_prompt.txt"):
-                            ignored.append(ln)
-                        else:
-                            remaining.append(ln)
-                else:
-                    remaining.append(ln)
-            return ignored, remaining
-
-        def _write_artifact(result: Dict[str, Any]) -> None:
+        def _write_artifact(result: dict[str, Any]) -> None:
             try:
                 if feature_id is not None:
-                    out_dir = self.project_dir / ".autocoder" / "features" / str(int(feature_id)) / "gatekeeper"
+                    out_dir = (
+                        self.project_dir
+                        / ".autocoder"
+                        / "features"
+                        / str(int(feature_id))
+                        / "gatekeeper"
+                    )
                 else:
                     out_dir = self.project_dir / ".autocoder" / "gatekeeper"
                 out_dir.mkdir(parents=True, exist_ok=True)
@@ -327,7 +275,7 @@ class Gatekeeper:
                 gemini_model=getattr(r, "gemini_model", None),
             )
 
-        def _run_shell(command: str, *, cwd: Path, timeout_s: int | None = None) -> Dict[str, Any]:
+        def _run_shell(command: str, *, cwd: Path, timeout_s: int | None = None) -> dict[str, Any]:
             try:
                 cmd = _expand_placeholders(command, cwd)
                 result = subprocess.run(
@@ -391,8 +339,8 @@ class Gatekeeper:
             detected_main = detect_main_branch()
             has_origin = origin_exists()
 
-            porcelain = _git_porcelain()
-            ignored_dirty, remaining_dirty = _split_dirty(porcelain)
+            dirty = get_git_dirty_status(self.project_dir)
+            ignored_dirty, remaining_dirty = dirty.ignored, dirty.remaining
             can_update_ref_without_checkout = bool(ignored_dirty) and not remaining_dirty
             if remaining_dirty:
                 return {
@@ -422,18 +370,32 @@ class Gatekeeper:
                     }
 
             # Step 2: Create temporary worktree for verification
-            temp_worktree_path = self.project_dir / f"verify_temp_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+            temp_worktree_path = (
+                self.project_dir / f"verify_temp_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+            )
 
             try:
-                base_ref = f"origin/{detected_main}" if (fetch_remote and has_origin) else detected_main
-                safe_branch_name = branch_name.replace(" ", "-").replace("\\", "-").replace(":", "-")
+                base_ref = (
+                    f"origin/{detected_main}" if (fetch_remote and has_origin) else detected_main
+                )
+                safe_branch_name = (
+                    branch_name.replace(" ", "-").replace("\\", "-").replace(":", "-")
+                )
                 verify_branch = f"verify/{safe_branch_name}"
                 # Create temp worktree on base ref
                 subprocess.run(
-                    ["git", "worktree", "add", "-b", verify_branch, str(temp_worktree_path), base_ref],
+                    [
+                        "git",
+                        "worktree",
+                        "add",
+                        "-b",
+                        verify_branch,
+                        str(temp_worktree_path),
+                        base_ref,
+                    ],
                     cwd=self.project_dir,
                     check=True,
-                    capture_output=True
+                    capture_output=True,
                 )
                 logger.info(f"✓ Created temporary worktree: {temp_worktree_path}")
             except subprocess.CalledProcessError as e:
@@ -441,7 +403,7 @@ class Gatekeeper:
                 return {
                     "approved": False,
                     "reason": "Failed to create temporary worktree for verification",
-                    "error": str(e)
+                    "error": str(e),
                 }
 
             # Step 3: In temp worktree, attempt merge (no commit yet)
@@ -450,7 +412,7 @@ class Gatekeeper:
                     ["git", "merge", "--no-commit", "--no-ff", branch_name],
                     cwd=str(temp_worktree_path),
                     capture_output=True,
-                    text=True
+                    text=True,
                 )
 
                 if merge_result.returncode != 0:
@@ -460,18 +422,14 @@ class Gatekeeper:
                         "approved": False,
                         "reason": "Merge conflict - needs manual resolution",
                         "merge_conflict": True,
-                        "errors": merge_result.stderr
+                        "errors": merge_result.stderr,
                     }
 
                 logger.info("✓ Merged branch in temp worktree (no commit yet)")
 
             except subprocess.CalledProcessError as e:
                 logger.error(f"✗ Merge failed: {e}")
-                return {
-                    "approved": False,
-                    "reason": "Merge command failed",
-                    "error": str(e)
-                }
+                return {"approved": False, "reason": "Merge command failed", "error": str(e)}
 
             # Step 4: Run tests IN TEMP WORKTREE
             logger.info("🧪 Running verification in temporary worktree...")
@@ -494,9 +452,14 @@ class Gatekeeper:
                         selected = Gatekeeper._select_node_install_command(temp_path)
                         if selected:
                             setup_cmd = selected
-                    verification["setup"] = _run_shell(setup_cmd, cwd=temp_path, timeout_s=setup.timeout_s)
+                    verification["setup"] = _run_shell(
+                        setup_cmd, cwd=temp_path, timeout_s=setup.timeout_s
+                    )
                     verification["setup"]["allow_fail"] = bool(getattr(setup, "allow_fail", False))
-                    if not verification["setup"]["passed"] and not verification["setup"]["allow_fail"]:
+                    if (
+                        not verification["setup"]["passed"]
+                        and not verification["setup"]["allow_fail"]
+                    ):
                         result = {
                             "approved": False,
                             "reason": "Setup failed",
@@ -509,7 +472,7 @@ class Gatekeeper:
 
                 # Run remaining commands; ensure "test" runs early.
                 ordered = ["test", "lint", "typecheck", "format", "build", "acceptance"]
-                seen = set(["setup"])
+                seen = {"setup"}
                 for name in ordered + sorted(k for k in command_specs.keys() if k not in ordered):
                     if name in seen:
                         continue
@@ -517,7 +480,9 @@ class Gatekeeper:
                     if not spec or not getattr(spec, "command", None):
                         continue
                     seen.add(name)
-                    verification[name] = _run_shell(spec.command, cwd=temp_path, timeout_s=spec.timeout_s)
+                    verification[name] = _run_shell(
+                        spec.command, cwd=temp_path, timeout_s=spec.timeout_s
+                    )
                     verification[name]["allow_fail"] = bool(getattr(spec, "allow_fail", False))
                     if name == "test":
                         verification[name] = Gatekeeper._apply_allow_no_tests(
@@ -547,7 +512,9 @@ class Gatekeeper:
                 test_results = verification.get("test")
             else:
                 test_results = self._run_tests_in_directory(str(temp_worktree_path))
-                test_results = Gatekeeper._apply_allow_no_tests(test_results, allow_no_tests=allow_no_tests)
+                test_results = Gatekeeper._apply_allow_no_tests(
+                    test_results, allow_no_tests=allow_no_tests
+                )
                 verification["test"] = test_results
                 if not test_results.get("success", False):
                     result = {
@@ -588,7 +555,8 @@ class Gatekeeper:
                         "skipped": bool(rr.skipped),
                         "reason": rr.reason,
                         "findings": [
-                            {"severity": f.severity, "message": f.message, "file": f.file} for f in (rr.findings or [])
+                            {"severity": f.severity, "message": f.message, "file": f.file}
+                            for f in (rr.findings or [])
                         ],
                         "stdout": rr.stdout,
                         "stderr": rr.stderr,
@@ -607,7 +575,12 @@ class Gatekeeper:
                         "engines": list(review_cfg.engines or []),
                     }
 
-                if review_cfg.mode == "gate" and review and not review.get("approved") and not review.get("skipped"):
+                if (
+                    review_cfg.mode == "gate"
+                    and review
+                    and not review.get("approved")
+                    and not review.get("skipped")
+                ):
                     result = {
                         "approved": False,
                         "reason": "Review failed",
@@ -629,7 +602,7 @@ class Gatekeeper:
                     cwd=str(temp_worktree_path),
                     check=True,
                     capture_output=True,
-                    text=True
+                    text=True,
                 )
                 logger.info(f"✓ Committed merge in temp worktree: {commit_result.stdout.strip()}")
             except subprocess.CalledProcessError as e:
@@ -657,6 +630,7 @@ class Gatekeeper:
                 capture_output=True,
                 text=True,
             ).stdout.strip()
+
             # If the main working tree contains only ignorable runtime artifacts, we want to avoid
             # failing merges due to "untracked file would be overwritten" edge cases (common with
             # Claude CLI artifacts like claude-progress.txt). We still update the working tree when
@@ -749,7 +723,7 @@ class Gatekeeper:
                 "review": review,
                 "merge_commit": merge_commit_hash,
                 "diff_fingerprint": diff_fingerprint,
-                "timestamp": datetime.now().isoformat()
+                "timestamp": datetime.now().isoformat(),
             }
             _write_artifact(result)
             return result
@@ -763,7 +737,7 @@ class Gatekeeper:
                         ["git", "worktree", "remove", "-f", str(temp_worktree_path)],
                         cwd=self.project_dir,
                         capture_output=True,
-                        timeout=30
+                        timeout=30,
                     )
                     logger.info(f"✓ Cleaned up temporary worktree: {temp_worktree_path}")
 
@@ -776,7 +750,7 @@ class Gatekeeper:
                     # Force remove directory as fallback
                     try:
                         shutil.rmtree(str(temp_worktree_path), ignore_errors=True)
-                    except:
+                    except Exception:
                         pass
 
             # Cleanup agent's worktree if provided
@@ -806,7 +780,7 @@ class Gatekeeper:
                         capture_output=True,
                     )
 
-    def _run_tests(self, timeout: int = 300) -> Dict[str, Any]:
+    def _run_tests(self, timeout: int = 300) -> dict[str, Any]:
         """
         Run the test suite using the detected framework in project directory.
 
@@ -818,7 +792,7 @@ class Gatekeeper:
         """
         return self._run_tests_in_directory(str(self.project_dir), timeout)
 
-    def _run_tests_in_directory(self, directory: str, timeout: int = 300) -> Dict[str, Any]:
+    def _run_tests_in_directory(self, directory: str, timeout: int = 300) -> dict[str, Any]:
         """
         Run the test suite using the detected framework in specified directory.
 
@@ -834,21 +808,13 @@ class Gatekeeper:
             cmd = self.test_detector.get_test_command(ci_mode=True)
 
             if not cmd:
-                return {
-                    "success": False,
-                    "error": "No test framework detected"
-                }
+                return {"success": False, "error": "No test framework detected"}
 
             logger.info(f"Running: {cmd}")
 
             # Execute tests in specified directory
             result = subprocess.run(
-                cmd,
-                shell=True,
-                cwd=directory,
-                capture_output=True,
-                text=True,
-                timeout=timeout
+                cmd, shell=True, cwd=directory, capture_output=True, text=True, timeout=timeout
             )
 
             # Parse output
@@ -865,7 +831,7 @@ class Gatekeeper:
                 "command": cmd,
                 "output": output,
                 "errors": errors,
-                "summary": self._extract_test_summary(output, errors)
+                "summary": self._extract_test_summary(output, errors),
             }
 
         except subprocess.TimeoutExpired:
@@ -873,16 +839,13 @@ class Gatekeeper:
             return {
                 "success": False,
                 "error": f"Tests timed out after {timeout} seconds",
-                "timeout": True
+                "timeout": True,
             }
         except Exception as e:
             logger.error(f"Test execution failed: {e}")
-            return {
-                "success": False,
-                "error": str(e)
-            }
+            return {"success": False, "error": str(e)}
 
-    def _extract_test_summary(self, stdout: str, stderr: str) -> Dict[str, Any]:
+    def _extract_test_summary(self, stdout: str, stderr: str) -> dict[str, Any]:
         """
         Extract test summary from output.
 
@@ -892,13 +855,7 @@ class Gatekeeper:
 
         combined = stdout + stderr
 
-        summary = {
-            "total": None,
-            "passed": None,
-            "failed": None,
-            "skipped": None,
-            "duration": None
-        }
+        summary = {"total": None, "passed": None, "failed": None, "skipped": None, "duration": None}
 
         # Jest/Vitest pattern
         jest_pattern = r"(\d+)\s+passed,\s*(\d+)\s+failed"
@@ -925,12 +882,7 @@ class Gatekeeper:
 
         return summary
 
-    def reject_feature(
-        self,
-        branch_name: str,
-        reason: str,
-        errors: str
-    ) -> Dict[str, Any]:
+    def reject_feature(self, branch_name: str, reason: str, errors: str) -> dict[str, Any]:
         """
         Reject a feature branch and clean up.
 
@@ -947,11 +899,7 @@ class Gatekeeper:
 
         # Abort any pending merge
         try:
-            subprocess.run(
-                ["git", "merge", "--abort"],
-                cwd=self.project_dir,
-                capture_output=True
-            )
+            subprocess.run(["git", "merge", "--abort"], cwd=self.project_dir, capture_output=True)
             logger.info("✓ Aborted pending merge")
         except subprocess.CalledProcessError:
             pass  # No merge in progress
@@ -962,7 +910,7 @@ class Gatekeeper:
                 ["git", "reset", "--hard", "origin/main"],
                 cwd=self.project_dir,
                 check=True,
-                capture_output=True
+                capture_output=True,
             )
             logger.info("✓ Reset to origin/main")
         except subprocess.CalledProcessError as e:
@@ -972,7 +920,7 @@ class Gatekeeper:
             "approved": False,
             "reason": reason,
             "errors": errors,
-            "timestamp": datetime.now().isoformat()
+            "timestamp": datetime.now().isoformat(),
         }
 
     def verify_commands_only(
@@ -982,7 +930,7 @@ class Gatekeeper:
         allow_no_tests: bool = False,
         feature_id: int | None = None,
         agent_id: str | None = None,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Run deterministic verification commands without merging.
 
@@ -990,10 +938,16 @@ class Gatekeeper:
         before doing a full Gatekeeper temp-worktree merge verification.
         """
 
-        def _write_artifact(result: Dict[str, Any]) -> None:
+        def _write_artifact(result: dict[str, Any]) -> None:
             try:
                 if feature_id is not None:
-                    out_dir = self.project_dir / ".autocoder" / "features" / str(int(feature_id)) / "controller"
+                    out_dir = (
+                        self.project_dir
+                        / ".autocoder"
+                        / "features"
+                        / str(int(feature_id))
+                        / "controller"
+                    )
                 else:
                     out_dir = self.project_dir / ".autocoder" / "controller"
                 out_dir.mkdir(parents=True, exist_ok=True)
@@ -1013,7 +967,7 @@ class Gatekeeper:
             venv_py_s = str(venv_py).replace("\\", "/")
             return command.replace("{PY}", py).replace("{VENV_PY}", venv_py_s)
 
-        def _run_shell(command: str, *, cwd: Path, timeout_s: int | None) -> Dict[str, Any]:
+        def _run_shell(command: str, *, cwd: Path, timeout_s: int | None) -> dict[str, Any]:
             cmd = _expand_placeholders(command, cwd)
             try:
                 result = subprocess.run(
@@ -1106,7 +1060,9 @@ class Gatekeeper:
             verification[name] = _run_shell(spec.command, cwd=workdir, timeout_s=spec.timeout_s)
             verification[name]["allow_fail"] = bool(getattr(spec, "allow_fail", False))
             if name == "test":
-                verification[name] = Gatekeeper._apply_allow_no_tests(verification[name], allow_no_tests=allow_no_tests)
+                verification[name] = Gatekeeper._apply_allow_no_tests(
+                    verification[name], allow_no_tests=allow_no_tests
+                )
             if not verification[name]["success"] and not verification[name]["allow_fail"]:
                 result = {
                     "approved": False,
@@ -1143,17 +1099,10 @@ def main():
     """CLI interface for the Gatekeeper."""
     import argparse
 
-    parser = argparse.ArgumentParser(
-        description="Gatekeeper - Verify and merge feature branches"
-    )
+    parser = argparse.ArgumentParser(description="Gatekeeper - Verify and merge feature branches")
+    parser.add_argument("branch", help="Feature branch name (e.g., feat/user-auth-001)")
     parser.add_argument(
-        "branch",
-        help="Feature branch name (e.g., feat/user-auth-001)"
-    )
-    parser.add_argument(
-        "--project-dir",
-        default=".",
-        help="Path to project directory (default: current directory)"
+        "--project-dir", default=".", help="Path to project directory (default: current directory)"
     )
 
     args = parser.parse_args()
@@ -1186,4 +1135,5 @@ def main():
 
 if __name__ == "__main__":
     import sys
+
     sys.exit(main())

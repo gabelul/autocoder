@@ -7,17 +7,24 @@ Uses project registry for path lookups.
 """
 
 import re
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
 
-from datetime import datetime, timedelta
-
-from ..schemas import AgentStatus, AgentActionResponse, AgentStartRequest, AgentScheduleRequest, AgentScheduleResponse
-from ..services.process_manager import get_manager
-from ..services.scheduler import schedule_run, get_schedule, cancel_schedule
-from autocoder.core.spec_validation import project_setup_status
 from autocoder.core.git_bootstrap import ensure_git_repo_for_parallel
+from autocoder.core.git_dirty import get_git_dirty_status
+from autocoder.core.spec_validation import project_setup_status
+
+from ..schemas import (
+    AgentActionResponse,
+    AgentScheduleRequest,
+    AgentScheduleResponse,
+    AgentStartRequest,
+    AgentStatus,
+)
+from ..services.process_manager import get_manager
+from ..services.scheduler import cancel_schedule, get_schedule, schedule_run
 
 
 def _get_project_path(project_name: str) -> Path:
@@ -35,11 +42,8 @@ ROOT_DIR = Path(__file__).parent.parent.parent
 
 def validate_project_name(name: str) -> str:
     """Validate and sanitize project name to prevent path traversal."""
-    if not re.match(r'^[a-zA-Z0-9_-]{1,50}$', name):
-        raise HTTPException(
-            status_code=400,
-            detail="Invalid project name"
-        )
+    if not re.match(r"^[a-zA-Z0-9_-]{1,50}$", name):
+        raise HTTPException(status_code=400, detail="Invalid project name")
     return name
 
 
@@ -49,12 +53,15 @@ def get_project_manager(project_name: str):
     project_dir = _get_project_path(project_name)
 
     if not project_dir:
-        raise HTTPException(status_code=404, detail=f"Project '{project_name}' not found in registry")
+        raise HTTPException(
+            status_code=404, detail=f"Project '{project_name}' not found in registry"
+        )
 
     if not project_dir.exists():
         raise HTTPException(status_code=404, detail=f"Project directory not found: {project_dir}")
 
     return get_manager(project_name, project_dir, ROOT_DIR)
+
 
 @router.get("/status", response_model=AgentStatus)
 async def get_agent_status(project_name: str):
@@ -99,9 +106,23 @@ async def start_agent(
                     "Fix manually:\n"
                     "  git init\n"
                     "  git add -A\n"
-                    "  git commit -m \"init\"\n"
+                    '  git commit -m "init"\n'
                     "Or switch to Standard mode."
                 ),
+            )
+        dirty = get_git_dirty_status(manager.project_dir)
+        if dirty.remaining:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "error": "git_dirty",
+                    "message": (
+                        "Git working tree is dirty. Gatekeeper cannot merge deterministically while there are "
+                        "uncommitted changes in the project root."
+                    ),
+                    "remaining": dirty.remaining,
+                    "ignored": dirty.ignored,
+                },
             )
 
     # Parallel and YOLO modes are mutually exclusive
@@ -210,9 +231,23 @@ async def schedule_agent(
                     "Fix manually:\n"
                     "  git init\n"
                     "  git add -A\n"
-                    "  git commit -m \"init\"\n"
+                    '  git commit -m "init"\n'
                     "Or schedule Standard mode."
                 ),
+            )
+        dirty = get_git_dirty_status(manager.project_dir)
+        if dirty.remaining:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "error": "git_dirty",
+                    "message": (
+                        "Git working tree is dirty. Gatekeeper cannot merge deterministically while there are "
+                        "uncommitted changes in the project root."
+                    ),
+                    "remaining": dirty.remaining,
+                    "ignored": dirty.ignored,
+                },
             )
     run_at = request.run_at
     if run_at.tzinfo is not None:

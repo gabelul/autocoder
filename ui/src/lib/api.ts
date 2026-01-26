@@ -42,6 +42,9 @@ import type {
   DevServerActionResponse,
   TerminalInfo,
   BackendVersion,
+  GitStatusResponse,
+  GitStashRequest,
+  GitStashResponse,
 } from './types'
 
 const API_BASE = '/api'
@@ -56,8 +59,19 @@ async function fetchJSON<T>(url: string, options?: RequestInit): Promise<T> {
   })
 
   if (!response.ok) {
-    const error = await response.json().catch(() => ({ detail: 'Unknown error' }))
-    throw new Error(error.detail || `HTTP ${response.status}`)
+    const payload = await response.json().catch(() => ({ detail: 'Unknown error' }))
+    const detail = (payload as any)?.detail ?? payload
+    const message =
+      typeof detail === 'string'
+        ? detail
+        : typeof (payload as any)?.message === 'string'
+          ? (payload as any).message
+          : JSON.stringify(detail, null, 2)
+
+    const err: any = new Error(message || `HTTP ${response.status}`)
+    err.status = response.status
+    err.detail = detail
+    throw err
   }
 
   return response.json()
@@ -324,6 +338,24 @@ export async function scheduleAgent(
 export async function cancelAgentSchedule(projectName: string): Promise<AgentScheduleResponse> {
   return fetchJSON(`/projects/${encodeURIComponent(projectName)}/agent/schedule`, {
     method: 'DELETE',
+  })
+}
+
+// ============================================================================
+// Git API
+// ============================================================================
+
+export async function getGitStatus(projectName: string): Promise<GitStatusResponse> {
+  return fetchJSON(`/projects/${encodeURIComponent(projectName)}/git/status`)
+}
+
+export async function gitStash(projectName: string, req: GitStashRequest = {}): Promise<GitStashResponse> {
+  return fetchJSON(`/projects/${encodeURIComponent(projectName)}/git/stash`, {
+    method: 'POST',
+    body: JSON.stringify({
+      include_untracked: req.include_untracked ?? true,
+      message: req.message ?? 'autocoder-ui: stash before parallel run',
+    }),
   })
 }
 

@@ -921,6 +921,7 @@ function App() {
             ) : (
               <>
                 <ProgressDashboard
+                  projectName={selectedProject}
                   passing={progress.passing}
                   total={progress.total}
                   percentage={progress.percentage}

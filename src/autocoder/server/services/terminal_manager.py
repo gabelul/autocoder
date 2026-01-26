@@ -22,10 +22,10 @@ import subprocess
 import sys
 import threading
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Callable, Set
 
 logger = logging.getLogger(__name__)
 
@@ -136,7 +136,7 @@ class TerminalSession:
         self.project_name = project_name
         self.project_dir = Path(project_dir).resolve()
 
-        self._pty_process: "WinPtyProcess | None" = None
+        self._pty_process: WinPtyProcess | None = None
         self._master_fd: int | None = None
         self._child_pid: int | None = None
 
@@ -144,7 +144,7 @@ class TerminalSession:
         self._output_task: asyncio.Task | None = None
         self.last_error: str | None = None
 
-        self._output_callbacks: Set[Callable[[bytes], None]] = set()
+        self._output_callbacks: set[Callable[[bytes], None]] = set()
         self._callbacks_lock = threading.Lock()
 
     @property
@@ -203,8 +203,11 @@ class TerminalSession:
                     logger.warning(msg)
                     return False
                 assert WinPtyProcess is not None
+                # WinPTY ultimately relies on CreateProcess; passing an unquoted exe path with spaces
+                # (e.g. "C:\\Program Files\\PowerShell\\7\\pwsh.exe") can fail as "C:\\Program".
+                cmd = subprocess.list2cmdline([shell])
                 self._pty_process = WinPtyProcess.spawn(
-                    [shell],
+                    cmd,
                     cwd=str(self.project_dir),
                     env=os.environ.copy(),
                 )
@@ -281,6 +284,7 @@ class TerminalSession:
         loop = asyncio.get_running_loop()
         try:
             while self._is_active and self._master_fd is not None:
+
                 def read_with_select() -> bytes:
                     if self._master_fd is None:
                         return b""
@@ -460,7 +464,9 @@ def delete_terminal(project_name: str, terminal_id: str) -> bool:
     return True
 
 
-def get_terminal_session(project_name: str, project_dir: Path, terminal_id: str | None = None) -> TerminalSession:
+def get_terminal_session(
+    project_name: str, project_dir: Path, terminal_id: str | None = None
+) -> TerminalSession:
     if terminal_id is None:
         terminals = list_terminals(project_name)
         if not terminals:

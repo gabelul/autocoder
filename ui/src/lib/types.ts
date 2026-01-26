@@ -277,6 +277,22 @@ export interface RetryBlockedResponse {
   group_key?: string | null
 }
 
+export interface GitStatusResponse {
+  is_clean: boolean
+  ignored: string[]
+  remaining: string[]
+}
+
+export interface GitStashRequest {
+  include_untracked?: boolean
+  message?: string
+}
+
+export interface GitStashResponse {
+  success: boolean
+  message: string
+}
+
 export interface PruneWorkerLogsRequest {
   keep_days: number
   keep_files: number
