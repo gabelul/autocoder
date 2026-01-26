@@ -14,6 +14,7 @@ interface ProgressDashboardProps {
     done: number
     blocked: number
   }
+  onResolveBlockers?: () => void
 }
 
 export function ProgressDashboard({
@@ -23,6 +24,7 @@ export function ProgressDashboard({
   isConnected,
   agentStatus,
   featureCounts,
+  onResolveBlockers,
 }: ProgressDashboardProps) {
   const pct = total > 0 ? Math.max(0, Math.min(100, percentage)) : 0
 
@@ -77,9 +79,20 @@ export function ProgressDashboard({
               Done {featureCounts.done}
             </span>
             {featureCounts.blocked > 0 ? (
-              <span className="neo-badge bg-[var(--color-neo-danger)] text-white">
-                Blocked {featureCounts.blocked}
-              </span>
+              onResolveBlockers ? (
+                <button
+                  type="button"
+                  className="neo-badge bg-[var(--color-neo-danger)] text-white hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-neo-danger)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-neo-bg)]"
+                  onClick={onResolveBlockers}
+                  title="Resolve blocked features"
+                >
+                  Blocked {featureCounts.blocked}
+                </button>
+              ) : (
+                <span className="neo-badge bg-[var(--color-neo-danger)] text-white">
+                  Blocked {featureCounts.blocked}
+                </span>
+              )
             ) : null}
           </div>
         ) : null}
