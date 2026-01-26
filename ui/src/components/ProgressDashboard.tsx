@@ -1,4 +1,4 @@
-import { Wifi, WifiOff } from 'lucide-react'
+import { AlertTriangle, ChevronRight, Wifi, WifiOff } from 'lucide-react'
 import type { AgentStatus } from '../lib/types'
 
 interface ProgressDashboardProps {
@@ -82,11 +82,19 @@ export function ProgressDashboard({
               onResolveBlockers ? (
                 <button
                   type="button"
-                  className="neo-badge bg-[var(--color-neo-danger)] text-white hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-neo-danger)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-neo-bg)]"
+                  className="neo-badge bg-[var(--color-neo-danger)] text-white cursor-pointer hover:opacity-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-neo-danger)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--color-neo-bg)]"
                   onClick={onResolveBlockers}
-                  title="Resolve blocked features"
+                  title="Open “Resolve blockers”"
+                  aria-label={`Blocked ${featureCounts.blocked}. Open Resolve blockers.`}
                 >
-                  Blocked {featureCounts.blocked}
+                  <span className="inline-flex items-center gap-1.5">
+                    <AlertTriangle size={14} />
+                    <span>Blocked {featureCounts.blocked}</span>
+                    <span className="opacity-90 underline decoration-white/70 decoration-dotted underline-offset-2">
+                      Resolve
+                    </span>
+                    <ChevronRight size={14} />
+                  </span>
                 </button>
               ) : (
                 <span className="neo-badge bg-[var(--color-neo-danger)] text-white">
