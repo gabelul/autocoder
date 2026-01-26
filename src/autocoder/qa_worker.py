@@ -34,6 +34,7 @@ from datetime import datetime
 from pathlib import Path
 
 from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
+from claude_agent_sdk.types import ToolsPreset
 
 from autocoder.core.cli_defaults import get_codex_cli_defaults
 from autocoder.core.database import get_database
@@ -612,6 +613,8 @@ async def _run_claude_patch(repo: Path, *, prompt: str, timeout_s: int) -> tuple
 
     client = ClaudeSDKClient(
         options=ClaudeAgentOptions(
+            # Enable the Claude Code toolset, then restrict via `allowed_tools` + `settings`.
+            tools=ToolsPreset(type="preset", preset="claude_code"),
             model=model,
             cli_path=_claude_cli_path(use_custom_api),
             allowed_tools=["Read", "Write", "Edit", "Glob", "Grep"],
