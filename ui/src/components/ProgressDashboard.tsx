@@ -8,6 +8,7 @@ interface ProgressDashboardProps {
   isConnected: boolean
   agentStatus?: AgentStatus
   agentActivity?: { active: number; total: number } | null
+  idleDetail?: string | null
   featureCounts?: {
     staged: number
     pending: number
@@ -27,6 +28,7 @@ export function ProgressDashboard({
   isConnected,
   agentStatus,
   agentActivity,
+  idleDetail,
   featureCounts,
   onResolveBlockers,
   agentBadge,
@@ -140,7 +142,18 @@ export function ProgressDashboard({
 
         <div className="flex flex-wrap items-center gap-2">
           {statusText ? (
-            <span className={`neo-badge ${statusClass}`}>{statusText}</span>
+            <span className={`neo-badge ${statusClass}`} title={isIdle ? idleDetail || undefined : undefined}>
+              {statusText}
+            </span>
+          ) : null}
+
+          {isIdle && idleDetail ? (
+            <span
+              className="neo-badge bg-[var(--color-neo-neutral-200)] text-[var(--color-neo-text-secondary)]"
+              title={idleDetail}
+            >
+              {idleDetail}
+            </span>
           ) : null}
 
           <span

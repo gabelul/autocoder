@@ -33,8 +33,9 @@ import tempfile
 from datetime import datetime
 from pathlib import Path
 
-from autocoder.core.cli_defaults import get_codex_cli_defaults
 from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
+
+from autocoder.core.cli_defaults import get_codex_cli_defaults
 from autocoder.core.database import get_database
 from autocoder.core.knowledge_files import build_knowledge_bundle
 
@@ -319,11 +320,13 @@ def _fix_prompt_diff_only(*, repo: Path, project_dir: Path, failure: str, diff: 
     knowledge = build_knowledge_bundle(project_dir, max_total_chars=8000)
     base = (
         "You are a software engineer fixing a CI failure.\n"
-        "Output ONLY a git-apply-compatible UNIFIED DIFF.\n"
+        "Make changes by editing files in the repository.\n"
+        "Do NOT output a patch/diff.\n"
+        "When finished, reply with a short status like 'DONE' (no markdown fences).\n"
         "Rules:\n"
         "- Only fix the failing verification (tests/lint/typecheck). No new features.\n"
         "- Keep the patch minimal.\n"
-        "- Do NOT output JSON, markdown fences, or explanations.\n"
+        "- Do NOT output JSON or markdown fences.\n"
         "- Do NOT output '*** Begin Patch' or any other wrapper format.\n\n"
         f"Attempt: {attempt}\n\n"
         "Gatekeeper failure excerpt:\n"
@@ -388,11 +391,13 @@ def _implement_prompt_diff_only(
 
     return (
         "You are a software engineer implementing a feature.\n"
-        "Output ONLY a git-apply-compatible UNIFIED DIFF.\n"
+        "Make changes by editing files in the repository.\n"
+        "Do NOT output a patch/diff.\n"
+        "When finished, reply with a short status like 'DONE' (no markdown fences).\n"
         "Rules:\n"
         "- Implement ONLY this feature. Avoid unrelated refactors.\n"
         "- Keep changes minimal but complete.\n"
-        "- Do NOT output JSON, markdown fences, or explanations.\n"
+        "- Do NOT output JSON or markdown fences.\n"
         "- Do NOT output '*** Begin Patch' or any other wrapper format.\n\n"
         f"Attempt: {attempt}\n\n"
         "Feature:\n"
@@ -587,13 +592,15 @@ async def _run_claude_patch(repo: Path, *, prompt: str, timeout_s: int) -> tuple
         or "sonnet"
     ).strip()
 
-    # Read-only settings file (no writes). Use a temp file so it never gets committed by the worker.
+    # Tight sandbox for the patch worker. Allow file edits, but no Bash and no network.
     security_settings = {
         "sandbox": {"enabled": True, "autoAllowBashIfSandboxed": True},
         "permissions": {
             "defaultMode": "reject",
             "allow": [
                 "Read(./**)",
+                "Write(./**)",
+                "Edit(./**)",
                 "Glob(./**)",
                 "Grep(./**)",
             ],
@@ -607,17 +614,19 @@ async def _run_claude_patch(repo: Path, *, prompt: str, timeout_s: int) -> tuple
         options=ClaudeAgentOptions(
             model=model,
             cli_path=_claude_cli_path(use_custom_api),
-            allowed_tools=["Read", "Glob", "Grep"],
+            allowed_tools=["Read", "Write", "Edit", "Glob", "Grep"],
+            permission_mode="acceptEdits",
             system_prompt=(
-                "You are generating a unified diff patch.\n"
-                "Output ONLY a git-apply-compatible unified diff.\n"
-                "No explanations, no markdown fences, no JSON.\n"
-                "Do not use the AutoCoder '*** Begin Patch' format."
+                "You are editing a git repository to implement a requested change.\n"
+                "Use read/search tools to inspect the repo, and edit files to implement the request.\n"
+                "Do not run shell commands.\n"
+                "Do not output a patch/diff unless explicitly asked.\n"
             ),
             cwd=str(repo),
             settings=str(settings_path),
             max_turns=4,
-            setting_sources=["project"],
+            # Do not load user/project Claude settings for workers; only use the explicit sandbox above.
+            setting_sources=[],
         )
     )
 
@@ -631,31 +640,50 @@ async def _run_claude_patch(repo: Path, *, prompt: str, timeout_s: int) -> tuple
                         text += block.text
         return text
 
+    def _status_porcelain() -> str:
+        with contextlib.suppress(Exception):
+            return (_git(repo, ["status", "--porcelain"], check=True, timeout_s=60).stdout or "").strip()
+        return ""
+
+    def _harvest_working_tree_patch() -> str:
+        # Include untracked files in the diff.
+        with contextlib.suppress(Exception):
+            _git(repo, ["add", "-N", "."], check=False, timeout_s=60)
+        out = ""
+        with contextlib.suppress(Exception):
+            out = _git(repo, ["diff"], check=False, timeout_s=120).stdout or ""
+        out = _strip_fences(out)
+        out = _trim_to_diff_start(out)
+        if not _looks_like_unified_diff(out):
+            return ""
+        return out
+
+    def _reset_clean() -> None:
+        with contextlib.suppress(Exception):
+            _git(repo, ["reset", "--hard", "HEAD"], check=False, timeout_s=120)
+        with contextlib.suppress(Exception):
+            # Never delete AutoCoder runtime artifacts (feature plans, logs, etc).
+            _git(repo, ["clean", "-fd", "-e", ".autocoder/"], check=False, timeout_s=120)
+
     try:
+        if _status_porcelain():
+            return False, "", "claude_patch worktree was not clean; refusing to run"
+
         async with client:
             text = await asyncio.wait_for(_collect_one(prompt), timeout=timeout_s)
-            candidate = _strip_fences(text)
-            candidate = _trim_to_diff_start(candidate)
-            if not _looks_like_unified_diff(candidate):
-                retry_prompt = (
-                    "Your previous response was not a patch.\n"
-                    "Output ONLY a unified diff that `git apply` can apply.\n"
-                    "Start with `diff --git` when possible; otherwise include `--- a/...` and `+++ b/...` with hunks.\n"
-                    "No explanations.\n"
-                )
-                text2 = await asyncio.wait_for(_collect_one(retry_prompt), timeout=timeout_s)
-                candidate = _trim_to_diff_start(_strip_fences(text2))
+            patch = _harvest_working_tree_patch()
+            if patch:
+                _reset_clean()
+                return True, patch, ""
 
-            if not _looks_like_unified_diff(candidate):
-                preview = (candidate.strip().splitlines()[0] if candidate.strip() else "(empty)").strip()
-                return False, "", f"claude_patch returned non-diff output: {preview[:200]}"
-
-            return True, candidate, ""
+            preview = (text.strip().splitlines()[0] if text.strip() else "(empty)").strip()
+            return False, "", f"claude_patch produced no git diff (assistant said: {preview[:200]})"
     except asyncio.TimeoutError:
         return False, "", "claude patch timed out"
     except Exception as e:
         return False, "", str(e)
     finally:
+        _reset_clean()
         with contextlib.suppress(Exception):
             os.unlink(settings_path)
 

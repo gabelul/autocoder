@@ -23,6 +23,28 @@ export interface ParallelAgentsStatus {
   agents: ParallelAgentInfo[]
 }
 
+export interface ParallelQueueStateFeatureRef {
+  id: number
+  name: string
+  next_attempt_at: string | null
+}
+
+export interface ParallelQueueStateDepRef {
+  id: number
+  name: string
+}
+
+export interface ParallelQueueState {
+  pending_total: number
+  claimable_now: number
+  waiting_backoff: number
+  waiting_deps: number
+  staged_total: number
+  earliest_next_attempt_at: string | null
+  earliest_retry_feature: ParallelQueueStateFeatureRef | null
+  example_dep_blocked_feature: ParallelQueueStateDepRef | null
+}
+
 const API_BASE = '/api'
 
 export function useParallelAgentsStatus(projectName: string | null, limit: number = 50) {
@@ -44,3 +66,20 @@ export function useParallelAgentsStatus(projectName: string | null, limit: numbe
   })
 }
 
+export function useParallelQueueState(projectName: string | null) {
+  return useQuery({
+    queryKey: ['parallel-queue', 'state', projectName],
+    queryFn: async () => {
+      const response = await fetch(
+        `${API_BASE}/projects/${encodeURIComponent(projectName!)}/parallel/queue-state`
+      )
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({ detail: 'Unknown error' }))
+        throw new Error(err.detail || `HTTP ${response.status}`)
+      }
+      return response.json() as Promise<ParallelQueueState>
+    },
+    enabled: !!projectName,
+    refetchInterval: 5000,
+  })
+}
