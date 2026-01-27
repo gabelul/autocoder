@@ -14,6 +14,7 @@ import re
 import subprocess
 import sys
 import threading
+import time
 from collections.abc import Awaitable, Callable
 from datetime import datetime
 from pathlib import Path
@@ -61,6 +62,68 @@ AUTH_ERROR_HELP = (
     "- If you use API keys: set `ANTHROPIC_API_KEY` (or `ANTHROPIC_AUTH_TOKEN` + `ANTHROPIC_BASE_URL`).\n"
     "- Then restart the agent."
 )
+
+
+def _env_truthy(name: str, *, default: bool = False) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return str(raw).strip().lower() not in {"", "0", "false", "no", "off"}
+
+
+def cleanup_tmpclaude_dirs(project_dir: Path) -> tuple[int, int]:
+    """
+    Best-effort cleanup of Claude Code CLI scratch directories in the project root.
+
+    These dirs are typically named like `tmpclaude-<id>-cwd` and can be left behind after
+    interrupted runs. Callers must ensure the agent is not running.
+
+    Environment:
+    - AUTOCODER_CLEAN_TMPCLAUDE=0 disables this cleanup.
+    - AUTOCODER_TMPCLAUDE_MAX_AGE_S=<seconds> deletes only dirs older than this age.
+
+    Returns:
+        (deleted_count, failed_count)
+    """
+    if not _env_truthy("AUTOCODER_CLEAN_TMPCLAUDE", default=True):
+        return 0, 0
+
+    project_dir = Path(project_dir).resolve()
+    deleted = 0
+    failed = 0
+
+    max_age_s: float | None = None
+    max_age_raw = str(os.environ.get("AUTOCODER_TMPCLAUDE_MAX_AGE_S", "")).strip()
+    if max_age_raw:
+        with contextlib.suppress(Exception):
+            max_age_s = float(max_age_raw)
+
+    for p in sorted(project_dir.glob("tmpclaude-*")):
+        try:
+            if not p.is_dir():
+                continue
+        except Exception:
+            continue
+
+        if max_age_s is not None:
+            with contextlib.suppress(Exception):
+                age_s = time.time() - float(p.stat().st_mtime)
+                if age_s < max_age_s:
+                    continue
+
+        try:
+            import shutil
+
+            shutil.rmtree(p, ignore_errors=False)
+            deleted += 1
+        except Exception as e:
+            failed += 1
+            logger.debug("Failed to delete tmpclaude dir %s: %s", p, e)
+
+    if deleted or failed:
+        logger.info("tmpclaude cleanup: deleted=%s failed=%s", deleted, failed)
+
+    return deleted, failed
 
 
 def sanitize_output(line: str) -> str:
@@ -518,6 +581,11 @@ class AgentProcessManager:
         if not self._check_lock():
             return False, "Another agent instance is already running for this project"
 
+        # Safe cleanup of Claude temp dirs before launching a new run.
+        # We only do this after lock-check confirms no agent is running.
+        with contextlib.suppress(Exception):
+            cleanup_tmpclaude_dirs(self.project_dir)
+
         # Store mode settings for status queries
         self.yolo_mode = yolo_mode
         self.parallel_mode = parallel_mode
@@ -654,6 +722,10 @@ class AgentProcessManager:
             self._external_create_time = None
             self.yolo_mode = False  # Reset YOLO mode
             self.parallel_mode = False
+
+            # Cleanup tmpclaude dirs now that the run is fully stopped.
+            with contextlib.suppress(Exception):
+                cleanup_tmpclaude_dirs(self.project_dir)
 
             return True, "Agent stopped"
         except Exception as e:
