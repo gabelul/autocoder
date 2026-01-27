@@ -49,6 +49,7 @@ _DEFAULT_GITIGNORE_LINES = [
     ".autocoder/",
     "worktrees/",
     ".playwright-mcp/",
+    "tmpclaude-*/",
     "*.pid",
     ".agent.lock",
     ".progress_cache",

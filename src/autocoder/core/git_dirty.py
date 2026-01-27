@@ -60,6 +60,8 @@ def split_dirty(lines: list[str], *, project_dir: Path) -> tuple[list[str], list
         "claude-progress.txt",
     }
     ignore_untracked_globs = [
+        # Claude Code CLI scratch dirs (often created under CWD).
+        "tmpclaude-*",
         "*.pid",
     ]
 
