@@ -358,6 +358,9 @@ class AssistantChatSession:
 
         # Build MCP servers config - features and Playwright
         playwright_args = ["@playwright/mcp@latest", "--viewport-size", "1280x720"]
+        headless_raw = os.environ.get("PLAYWRIGHT_HEADLESS", "")
+        if headless_raw.strip().lower() in {"1", "true", "yes", "on"}:
+            playwright_args.append("--headless")
         isolated_raw = os.environ.get("AUTOCODER_PLAYWRIGHT_ISOLATED", "")
         if isolated_raw.strip().lower() not in {"0", "false", "no", "off"}:
             playwright_args.append("--isolated")

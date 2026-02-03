@@ -207,6 +207,7 @@ export function NewProjectModal({
         stop_when_done: stopWhenDone,
         locks_enabled: true,
         worker_verify: true,
+        playwright_headless: false,
       })
     } catch (e: any) {
       setError(e instanceof Error ? e.message : 'Failed to save project runtime settings')

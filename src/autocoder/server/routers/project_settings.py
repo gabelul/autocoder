@@ -94,6 +94,9 @@ class ProjectRuntimeSettingsModel(BaseModel):
     locks_enabled: bool = True
     worker_verify: bool = True
 
+    # Browser (Playwright MCP)
+    playwright_headless: bool = False
+
     def to_core(self) -> ProjectRuntimeSettings:
         return ProjectRuntimeSettings(
             planner_enabled=bool(self.planner_enabled),
@@ -103,6 +106,7 @@ class ProjectRuntimeSettingsModel(BaseModel):
             stop_when_done=bool(self.stop_when_done),
             locks_enabled=bool(self.locks_enabled),
             worker_verify=bool(self.worker_verify),
+            playwright_headless=bool(self.playwright_headless),
         )
 
     @staticmethod
@@ -115,6 +119,7 @@ class ProjectRuntimeSettingsModel(BaseModel):
             stop_when_done=bool(v.stop_when_done),
             locks_enabled=bool(v.locks_enabled),
             worker_verify=bool(v.worker_verify),
+            playwright_headless=bool(v.playwright_headless),
         )
 
 
@@ -150,6 +155,7 @@ async def get_project_runtime_settings(project_name: str):
         stop_when_done=bool(base.stop_when_done),
         locks_enabled=bool(base.locks_enabled),
         worker_verify=bool(base.worker_verify),
+        playwright_headless=False,
     )
     return ProjectRuntimeSettingsModel.from_core(inherited)
 

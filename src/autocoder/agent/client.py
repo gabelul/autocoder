@@ -240,6 +240,9 @@ def create_client(
     if not yolo_mode:
         # Include Playwright MCP server for browser automation (standard mode only)
         playwright_args = ["@playwright/mcp@latest", "--viewport-size", "1280x720"]
+        headless_raw = os.environ.get("PLAYWRIGHT_HEADLESS", "")
+        if headless_raw.strip().lower() in {"1", "true", "yes", "on"}:
+            playwright_args.append("--headless")
         # Default on: keep browser profile in memory (prevents cross-agent tab/profile conflicts).
         isolated_raw = os.environ.get("AUTOCODER_PLAYWRIGHT_ISOLATED", "")
         if isolated_raw.strip().lower() not in {"0", "false", "no", "off"}:
@@ -264,6 +267,16 @@ def create_client(
     if lock_guard is not None:
         pre_tool_use_matchers.insert(1, HookMatcher(matcher="Write|Edit|MultiEdit", hooks=[lock_guard.pre_tool_use]))
 
+    max_turns = 300
+    raw_max_turns = os.environ.get("AUTOCODER_AGENT_MAX_TURNS")
+    if raw_max_turns is not None:
+        try:
+            parsed = int(str(raw_max_turns).strip())
+            if parsed > 0:
+                max_turns = parsed
+        except Exception:
+            pass
+
     return ClaudeSDKClient(
         options=ClaudeAgentOptions(
             model=model,
@@ -274,7 +287,7 @@ def create_client(
             allowed_tools=allowed_tools + (LOCK_MCP_TOOLS if "locks" in mcp_servers else []),
             mcp_servers=mcp_servers,
             hooks={"PreToolUse": pre_tool_use_matchers},
-            max_turns=1000,
+            max_turns=max_turns,
             cwd=str(project_dir.resolve()),
             settings=str(settings_file.resolve()),  # Use absolute path
         )
