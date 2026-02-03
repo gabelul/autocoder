@@ -61,10 +61,19 @@ async function fetchJSON<T>(url: string, options?: RequestInit): Promise<T> {
   if (!response.ok) {
     const payload = await response.json().catch(() => ({ detail: 'Unknown error' }))
     const detail = (payload as any)?.detail ?? payload
+    const detailMessage =
+      detail &&
+      typeof detail === 'object' &&
+      typeof (detail as any)?.message === 'string' &&
+      (detail as any).message.trim()
+        ? String((detail as any).message)
+        : null
     const message =
       typeof detail === 'string'
         ? detail
-        : typeof (payload as any)?.message === 'string'
+        : detailMessage
+          ? detailMessage
+          : typeof (payload as any)?.message === 'string'
           ? (payload as any).message
           : JSON.stringify(detail, null, 2)
 
