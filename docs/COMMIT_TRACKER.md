@@ -18,9 +18,17 @@ As of **2026-02-03**, this tracker has been reviewed through upstream `b2ab1ec` 
 
 | Commit | Summary | Status in this fork | Notes / Action |
 | --- | --- | --- | --- |
+| `b2ab1ec` | Add in-app documentation pages | **Not planned (for now)** | We keep docs in-repo (`docs/` + README) and in the Knowledge modal. If we want an in-app docs hub later, we’ll likely render our existing markdown instead of maintaining a separate docs tree in UI. |
+| `016eead` | Update log prefix when batch agent moves between features | **N/A** | Only relevant if we adopt upstream’s multi-feature batching (we skipped it). |
 | `d8a8c83` | Prevent SQLite corruption in parallel mode with atomic operations | **Ported (adapted)** | Hardened feature claiming/updates with atomic transactions (`BEGIN IMMEDIATE`) + `UPDATE … RETURNING` claim; added concurrency/idempotency tests (`tests/test_db_atomicity.py`). |
 | `c4d0c6c` | Rate limit detection false positives + reset-time cap | **Ported (adapted)** | Centralized parsing in `autocoder.agent.rate_limit` (match “limit reached” anywhere, accept “resets at …”, clamp delay to 24h) + tests that tolerate missing tzdata (`tests/test_rate_limit_parsing.py`). |
 | `e348383` | User-visible error handling for spec creation agent start | **Ported (adapted)** | UI error toast prefers backend-provided `detail.message` when present (`ui/src/lib/api.ts`). |
+| `a050fd1` | Auto-start agent after spec creation from empty Kanban | **Already have** | Both new-project spec chat and existing-project spec chat call `startAgent()` on completion; failures surface inline in the chat UI. |
+| `338622b` | Fix spec creation chat full-screen layout in new project flow | **N/A** | Our New Project flow renders the modal at the app root (not inside a constrained dropdown subtree), so the upstream `createPortal()` fix doesn’t apply. |
+| `6609a0f` | Prevent SQLAlchemy PendingRollbackError + MCP tool allowlist fixes | **N/A** | Upstream SQLAlchemy/session handling; we use a raw SQLite layer. (Expand/spec sessions already have explicit allowed-tools in this fork.) |
+| `4336252` | Trim empty `ANTHROPIC_DEFAULT_OPUS_MODEL` to avoid invalid models | **Already have** | We `.strip()` model env overrides in `src/autocoder/core/model_settings.py` before using them. |
+| `f2eb468` | Ensure env-provided default model passes validation | **Already have** | Our model selection uses env overrides directly and doesn’t require a static `VALID_MODELS` list for runtime defaults. |
+| `94e0b05` | Token/perf/security refactor sweep | **Already have (selectively)** | We already use per-session `allowed_tools` (agent/spec/assistant/expand/QA), have retry backoff+jitter, and hide Playwright in YOLO mode. Remaining ideas worth re-checking later: lowering coding `max_turns` from 1000, and upstream’s `EXTRA_READ_PATHS` pattern (security-sensitive). |
 | `dc5bcc4` | Move autocoder runtime files into `.autocoder/` subdirectory | **Already have** | This fork already stores runtime artifacts under `<project>/.autocoder/` (logs, gatekeeper artifacts, locks, drafts, etc.). |
 | `24481d4` | Headless browser toggle to settings UI | **Not planned (for now)** | Could be added later if we want a per-project Playwright headless knob; current default is `--isolated` for safety. |
 | `1607fc8` | Multi-feature batching for coding agents | **Skipped** | Adds orchestration complexity; we already scale via multiple agents/parallel workers. |
