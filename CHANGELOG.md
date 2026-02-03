@@ -31,6 +31,8 @@ All notable changes to this fork will be listed here.
 - MCP `feature_create_bulk`: validate inputs before writing to DB
 - Worker logs: copy tail to clipboard
 - Playwright MCP now runs with `--isolated` by default (disable with `AUTOCODER_PLAYWRIGHT_ISOLATED=0`)
+- Per-project Playwright headless toggle (Settings → Run → Project Runtime → Playwright headless)
+- Agent sessions now default to `max_turns=300` (override with `AUTOCODER_AGENT_MAX_TURNS`)
 - Optional regression tester pool (Claude+Playwright): creates issue-like `REGRESSION` features linked via `regression_of_id`
 - Mission Control activity feed: DB-backed timeline (Gatekeeper/QA/regressions) shown on the project dashboard + bottom drawer Activity tab (shortcut: `M`)
 - Activity retention/pruning: `AUTOCODER_ACTIVITY_KEEP_DAYS`, `AUTOCODER_ACTIVITY_KEEP_ROWS` (also configurable in UI Advanced → Logs)

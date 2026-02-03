@@ -155,6 +155,8 @@ autocoder-ui
 - Stop-when-done: default is **stop** when the queue is empty; set `AUTOCODER_STOP_WHEN_DONE=0` to keep the agent alive for new features.
 - LAN access: set `AUTOCODER_UI_HOST=0.0.0.0` and `AUTOCODER_UI_ALLOW_REMOTE=1` (restart required).
 - Playwright MCP runs with an isolated in-memory profile by default (set `AUTOCODER_PLAYWRIGHT_ISOLATED=0` to disable).
+- Playwright headless is **per-project**: Settings → Run → Project Runtime → **Playwright headless** (or set `PLAYWRIGHT_HEADLESS=1`).
+- Agent session max turns defaults to `300` (override with `AUTOCODER_AGENT_MAX_TURNS` if you need longer runs).
 
 ### Project Setup & Reset (Web UI)
 

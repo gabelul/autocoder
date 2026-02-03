@@ -19,6 +19,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Settings UX: clearer labels/tooltips + safety warnings; Codex/Gemini-only options disable automatically if their CLIs aren’t detected.
 - Settings UX: replaced CSV “agent lists” with safe pickers + ordering, added in-UI Help modals, and file locks default to ON (with confirmation when disabling).
 - UI auto-build logs which file triggered a rebuild; optional mtime tolerance for FAT32/exFAT (`AUTOCODER_UI_MTIME_TOLERANCE_S`).
+- Project runtime: Playwright headless toggle (stored per project; applies on next start).
+
+### Agents
+- Main agent client default `max_turns` is now 300 (override with `AUTOCODER_AGENT_MAX_TURNS`).
 
 ### Multi-Model
 - Codex CLI defaults: auto-detect `model` + `model_reasoning_effort` from `~/.codex/config.toml` (Codex reasoning effort supports `xlow|xmedium|xhigh`).
