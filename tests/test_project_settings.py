@@ -20,6 +20,7 @@ def test_project_runtime_settings_roundtrip_and_env_override(tmp_path: Path):
         stop_when_done=False,
         locks_enabled=False,
         worker_verify=False,
+        playwright_headless=True,
     )
     save_project_runtime_settings(project_dir, settings)
 
@@ -32,6 +33,7 @@ def test_project_runtime_settings_roundtrip_and_env_override(tmp_path: Path):
     )
     assert overridden["AUTOCODER_STOP_WHEN_DONE"] == "0"
     assert overridden["AUTOCODER_PLANNER_REQUIRED"] == "1"
+    assert overridden["PLAYWRIGHT_HEADLESS"] == "1"
 
     not_overridden = apply_project_runtime_settings_env(
         project_dir, dict(base_env), override_existing=False

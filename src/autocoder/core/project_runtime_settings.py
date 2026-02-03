@@ -33,6 +33,9 @@ class ProjectRuntimeSettings:
     locks_enabled: bool
     worker_verify: bool
 
+    # Browser (Playwright MCP)
+    playwright_headless: bool
+
     def to_env(self) -> dict[str, str]:
         planner_enabled = bool(self.planner_enabled or self.planner_required)
         return {
@@ -43,6 +46,7 @@ class ProjectRuntimeSettings:
             "AUTOCODER_STOP_WHEN_DONE": "1" if self.stop_when_done else "0",
             "AUTOCODER_LOCKS_ENABLED": "1" if self.locks_enabled else "0",
             "AUTOCODER_WORKER_VERIFY": "1" if self.worker_verify else "0",
+            "PLAYWRIGHT_HEADLESS": "1" if self.playwright_headless else "0",
         }
 
     def to_dict(self) -> dict[str, Any]:
@@ -54,6 +58,7 @@ class ProjectRuntimeSettings:
             "stop_when_done": bool(self.stop_when_done),
             "locks_enabled": bool(self.locks_enabled),
             "worker_verify": bool(self.worker_verify),
+            "playwright_headless": bool(self.playwright_headless),
         }
 
     @staticmethod
@@ -66,6 +71,7 @@ class ProjectRuntimeSettings:
             stop_when_done=True,
             locks_enabled=True,
             worker_verify=True,
+            playwright_headless=False,
         )
 
 
@@ -92,6 +98,7 @@ def load_project_runtime_settings(project_dir: str | Path) -> ProjectRuntimeSett
             stop_when_done=bool(merged.get("stop_when_done", True)),
             locks_enabled=bool(merged.get("locks_enabled", True)),
             worker_verify=bool(merged.get("worker_verify", True)),
+            playwright_headless=bool(merged.get("playwright_headless", False)),
         )
     except Exception:
         return None

@@ -187,6 +187,7 @@ export interface ProjectRuntimeSettings {
   stop_when_done: boolean
   locks_enabled: boolean
   worker_verify: boolean
+  playwright_headless: boolean
 }
 
 // Setup types

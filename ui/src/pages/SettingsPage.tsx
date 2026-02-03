@@ -337,6 +337,26 @@ export function SettingsPage({
                     className="w-5 h-5 mt-1"
                   />
                 </label>
+
+                <label className="neo-card p-3 flex items-start justify-between gap-3 cursor-pointer">
+                  <div>
+                    <div className="font-display font-bold text-sm uppercase">Playwright headless</div>
+                    <div className="text-xs text-[var(--color-neo-text-secondary)]">
+                      Runs browser automation without a visible window (standard mode only).
+                    </div>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={Boolean(runtimeSettings.playwright_headless)}
+                    onChange={(e) =>
+                      updateRuntimeSettings.mutate({
+                        ...runtimeSettings,
+                        playwright_headless: Boolean(e.target.checked),
+                      })
+                    }
+                    className="w-5 h-5 mt-1"
+                  />
+                </label>
               </div>
 
               {(runtimeSettingsQ.isLoading || updateRuntimeSettings.isPending) && (
