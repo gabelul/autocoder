@@ -49,6 +49,13 @@ from ..core.database import get_database
 AUTO_CONTINUE_DELAY_SECONDS = 3
 
 
+def create_client(*args, **kwargs):
+    # Lazy import to avoid importing the Claude SDK on module import.
+    from .client import create_client as _create_client
+
+    return _create_client(*args, **kwargs)
+
+
 def _auto_continue_delay_from_rate_limit(response: str) -> tuple[float, str | None]:
     # Backwards-compatible wrapper for tests and older call sites.
     return auto_continue_delay_from_rate_limit(
@@ -322,8 +329,6 @@ async def run_autonomous_agent(
         print_session_header(iteration, needs_initializer)
 
         # Create client (fresh context)
-        from .client import create_client
-
         client = create_client(
             project_dir,
             model,
