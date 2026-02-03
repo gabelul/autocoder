@@ -11,9 +11,7 @@ import os
 import re
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
-
-from claude_agent_sdk import ClaudeSDKClient
+from typing import TYPE_CHECKING, Optional
 
 # Fix Windows console encoding for Unicode characters (emoji, etc.)
 # Without this, print() can crash when Claude outputs emoji like ✅
@@ -29,8 +27,10 @@ if sys.platform == "win32":
             except Exception:
                 pass
 
+if TYPE_CHECKING:
+    from claude_agent_sdk import ClaudeSDKClient
+
 from ..core.port_config import get_web_port
-from .client import create_client
 from .progress import print_session_header, print_progress_summary, has_features
 from .prompts import (
     get_initializer_prompt,
@@ -49,6 +49,13 @@ from ..core.database import get_database
 AUTO_CONTINUE_DELAY_SECONDS = 3
 
 
+def _auto_continue_delay_from_rate_limit(response: str) -> tuple[float, str | None]:
+    # Backwards-compatible wrapper for tests and older call sites.
+    return auto_continue_delay_from_rate_limit(
+        response, default_delay_s=float(AUTO_CONTINUE_DELAY_SECONDS)
+    )
+
+
 def _stop_when_done() -> bool:
     raw = str(os.environ.get("AUTOCODER_STOP_WHEN_DONE", "")).strip().lower()
     if not raw:
@@ -57,7 +64,7 @@ def _stop_when_done() -> bool:
 
 
 async def run_agent_session(
-    client: ClaudeSDKClient,
+    client: "ClaudeSDKClient",
     message: str,
     project_dir: Path,
 ) -> tuple[str, str]:
@@ -315,6 +322,8 @@ async def run_autonomous_agent(
         print_session_header(iteration, needs_initializer)
 
         # Create client (fresh context)
+        from .client import create_client
+
         client = create_client(
             project_dir,
             model,
