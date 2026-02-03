@@ -13,6 +13,7 @@ This is the single source of truth for the orchestrator.
 
 import sqlite3
 import json
+import contextlib
 import logging
 import os
 import random
@@ -151,6 +152,26 @@ class Database:
             yield conn
         finally:
             conn.close()
+
+    @contextmanager
+    def atomic_transaction(self):
+        """
+        Execute a transaction with an early write lock for cross-process safety.
+
+        SQLite's default DEFERRED transactions can allow multiple writers to race through
+        SELECT-before-UPDATE patterns. BEGIN IMMEDIATE acquires a RESERVED lock up-front,
+        preventing competing writers from entering write mode mid-transaction.
+        """
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("BEGIN IMMEDIATE")
+            try:
+                yield conn, cursor
+                conn.commit()
+            except Exception:
+                with contextlib.suppress(Exception):
+                    conn.rollback()
+                raise
 
     def _init_schema(self):
         """Initialize database schema."""
@@ -1181,65 +1202,92 @@ class Database:
         """
         Atomically claim the next pending feature.
 
-        This is safe under concurrency: it uses an UPDATE gated by status='PENDING'
-        and retries if another agent wins the race.
+        This is safe under concurrency: it uses an atomic UPDATE to avoid
+        SELECT-before-UPDATE snapshot races.
         """
         if not agent_id:
             raise ValueError("agent_id is required to claim a feature")
 
-        with self.get_connection() as conn:
-            cursor = conn.cursor()
+        order_by = "f.priority DESC, f.id ASC"
+        if prioritize_blockers:
+            order_by = (
+                "f.priority DESC, "
+                "(SELECT COUNT(1) FROM feature_dependencies dd "
+                " JOIN features fx ON fx.id = dd.feature_id "
+                " WHERE dd.depends_on_id = f.id AND fx.status IN ('PENDING','IN_PROGRESS')) DESC, "
+                "f.id ASC"
+            )
 
-            order_by = "f.priority DESC, f.id ASC"
-            if prioritize_blockers:
-                order_by = (
-                    "f.priority DESC, "
-                    "(SELECT COUNT(1) FROM feature_dependencies dd "
-                    " JOIN features fx ON fx.id = dd.feature_id "
-                    " WHERE dd.depends_on_id = f.id AND fx.status IN ('PENDING','IN_PROGRESS')) DESC, "
-                    "f.id ASC"
-                )
+        select_subquery = f"""
+            SELECT f.id
+            FROM features f
+            WHERE f.status = 'PENDING'
+              AND f.enabled = 1
+              AND (f.next_attempt_at IS NULL OR f.next_attempt_at <= CURRENT_TIMESTAMP)
+              AND NOT EXISTS (
+                SELECT 1
+                FROM feature_dependencies d
+                JOIN features dep ON dep.id = d.depends_on_id
+                WHERE d.feature_id = f.id AND dep.status != 'DONE'
+              )
+            ORDER BY {order_by}
+            LIMIT 1
+        """
 
-            for _ in range(max_attempts):
-                cursor.execute(
-                    f"""
-                    SELECT f.id, f.branch_name FROM features f
-                    WHERE f.status = 'PENDING'
-                      AND f.enabled = 1
-                      AND (f.next_attempt_at IS NULL OR f.next_attempt_at <= CURRENT_TIMESTAMP)
-                      AND NOT EXISTS (
-                        SELECT 1
-                        FROM feature_dependencies d
-                        JOIN features dep ON dep.id = d.depends_on_id
-                        WHERE d.feature_id = f.id AND dep.status != 'DONE'
-                      )
-                    ORDER BY {order_by}
-                    LIMIT 1
-                    """
-                )
-                row = cursor.fetchone()
-                if not row:
-                    return None
+        def _try_returning(cursor: sqlite3.Cursor) -> Optional[int]:
+            cursor.execute(
+                f"""
+                UPDATE features
+                SET status = 'IN_PROGRESS',
+                    assigned_agent_id = ?,
+                    assigned_at = CURRENT_TIMESTAMP,
+                    branch_name = COALESCE(
+                        NULLIF(TRIM(branch_name), ''),
+                        ? || '/' || id || '-' || CAST(strftime('%s','now') AS TEXT)
+                    ),
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ({select_subquery})
+                  AND status = 'PENDING'
+                RETURNING id
+                """,
+                (agent_id, str(branch_prefix or "feat")),
+            )
+            row = cursor.fetchone()
+            return int(row[0]) if row else None
 
-                feature_id = int(row[0])
-                existing_branch = str(row[1] or "").strip()
-                branch_name = existing_branch or f"{branch_prefix}/{feature_id}-{int(time.time())}"
+        feature_id: int | None = None
+        with self.atomic_transaction() as (_conn, cursor):
+            try:
+                feature_id = _try_returning(cursor)
+            except sqlite3.OperationalError:
+                # Older SQLite builds may not support RETURNING. Fall back to a safe loop
+                # while holding the write lock (BEGIN IMMEDIATE).
+                for _ in range(max_attempts):
+                    cursor.execute(select_subquery)
+                    row = cursor.fetchone()
+                    if not row:
+                        break
+                    candidate = int(row[0])
+                    cursor.execute(
+                        """
+                        UPDATE features
+                        SET status = 'IN_PROGRESS',
+                            assigned_agent_id = ?,
+                            assigned_at = CURRENT_TIMESTAMP,
+                            branch_name = COALESCE(
+                                NULLIF(TRIM(branch_name), ''),
+                                ? || '/' || id || '-' || CAST(strftime('%s','now') AS TEXT)
+                            ),
+                            updated_at = CURRENT_TIMESTAMP
+                        WHERE id = ? AND status = 'PENDING'
+                        """,
+                        (agent_id, str(branch_prefix or "feat"), candidate),
+                    )
+                    if cursor.rowcount > 0:
+                        feature_id = candidate
+                        break
 
-                cursor.execute("""
-                    UPDATE features
-                    SET status = 'IN_PROGRESS',
-                        assigned_agent_id = ?,
-                        assigned_at = CURRENT_TIMESTAMP,
-                        branch_name = COALESCE(branch_name, ?),
-                        updated_at = CURRENT_TIMESTAMP
-                    WHERE id = ? AND status = 'PENDING'
-                """, (agent_id, branch_name, feature_id))
-
-                if cursor.rowcount > 0:
-                    conn.commit()
-                    return self.get_feature(feature_id)
-
-            return None
+        return self.get_feature(feature_id) if feature_id else None
 
     def get_pending_queue_state(self) -> Dict[str, Any]:
         """
@@ -1664,43 +1712,83 @@ class Database:
         Returns:
             List of claimed feature IDs
         """
-        with self.get_connection() as conn:
-            cursor = conn.cursor()
+        if count <= 0:
+            return []
+        if not agent_id:
+            raise ValueError("agent_id is required to claim features")
 
-            claimed_ids = []
+        claimed_ids: list[int] = []
 
-            # Claim features one by one (transaction provides locking)
-            for i in range(count):
-                cursor.execute("""
-                    SELECT id FROM features
-                    WHERE status = 'PENDING'
-                      AND enabled = 1
-                    ORDER BY priority DESC, id ASC
-                    LIMIT 1
-                """)
+        with self.atomic_transaction() as (_conn, cursor):
+            for i in range(int(count)):
+                desired_branch = str(branch_names[i] if i < len(branch_names) else "").strip()
+                try:
+                    cursor.execute(
+                        """
+                        UPDATE features
+                        SET status = 'IN_PROGRESS',
+                            assigned_agent_id = ?,
+                            assigned_at = CURRENT_TIMESTAMP,
+                            branch_name = COALESCE(
+                                NULLIF(TRIM(branch_name), ''),
+                                NULLIF(?, ''),
+                                'feat/' || id || '-' || CAST(strftime('%s','now') AS TEXT)
+                            ),
+                            updated_at = CURRENT_TIMESTAMP
+                        WHERE id = (
+                            SELECT id
+                            FROM features
+                            WHERE status = 'PENDING'
+                              AND enabled = 1
+                            ORDER BY priority DESC, id ASC
+                            LIMIT 1
+                        )
+                          AND status = 'PENDING'
+                          AND enabled = 1
+                        RETURNING id
+                        """,
+                        (agent_id, desired_branch),
+                    )
+                    row = cursor.fetchone()
+                    if not row:
+                        break
+                    claimed_ids.append(int(row[0]))
+                except sqlite3.OperationalError:
+                    # Fallback without RETURNING (still safe under BEGIN IMMEDIATE).
+                    cursor.execute(
+                        """
+                        SELECT id
+                        FROM features
+                        WHERE status = 'PENDING'
+                          AND enabled = 1
+                        ORDER BY priority DESC, id ASC
+                        LIMIT 1
+                        """
+                    )
+                    row = cursor.fetchone()
+                    if not row:
+                        break
+                    feature_id = int(row[0])
+                    cursor.execute(
+                        """
+                        UPDATE features
+                        SET status = 'IN_PROGRESS',
+                            assigned_agent_id = ?,
+                            assigned_at = CURRENT_TIMESTAMP,
+                            branch_name = COALESCE(
+                                NULLIF(TRIM(branch_name), ''),
+                                NULLIF(?, ''),
+                                'feat/' || id || '-' || CAST(strftime('%s','now') AS TEXT)
+                            ),
+                            updated_at = CURRENT_TIMESTAMP
+                        WHERE id = ? AND status = 'PENDING' AND enabled = 1
+                        """,
+                        (agent_id, desired_branch, feature_id),
+                    )
+                    if cursor.rowcount > 0:
+                        claimed_ids.append(feature_id)
 
-                row = cursor.fetchone()
-                if not row:
-                    break  # No more pending features
-
-                feature_id = row[0]
-                branch_name = branch_names[i] if i < len(branch_names) else f"feat/{feature_id}"
-
-                cursor.execute("""
-                    UPDATE features
-                    SET status = 'IN_PROGRESS',
-                        assigned_agent_id = ?,
-                        assigned_at = CURRENT_TIMESTAMP,
-                        branch_name = ?,
-                        updated_at = CURRENT_TIMESTAMP
-                    WHERE id = ? AND status = 'PENDING' AND enabled = 1
-                """, (agent_id, branch_name, feature_id))
-
-                if cursor.rowcount > 0:
-                    claimed_ids.append(feature_id)
-
-            conn.commit()
-            return claimed_ids
+        return claimed_ids
 
     def update_feature_status(
         self,
@@ -1734,7 +1822,7 @@ class Database:
                     review_status = 'VERIFIED',
                     completed_at = CURRENT_TIMESTAMP,
                     updated_at = CURRENT_TIMESTAMP
-                WHERE id = ?
+                WHERE id = ? AND COALESCE(passes, 0) = 0
             """, (feature_id,))
             conn.commit()
             return cursor.rowcount > 0
@@ -1754,7 +1842,7 @@ class Database:
                     passes = FALSE,
                     review_status = 'READY_FOR_VERIFICATION',
                     updated_at = CURRENT_TIMESTAMP
-                WHERE id = ?
+                WHERE id = ? AND COALESCE(passes, 0) = 0
                 """,
                 (feature_id,),
             )
@@ -1772,8 +1860,7 @@ class Database:
         next_status: str | None = None,
     ) -> bool:
         """Mark a feature as failed (reset for retry)."""
-        with self.get_connection() as conn:
-            cursor = conn.cursor()
+        with self.atomic_transaction() as (_conn, cursor):
             cursor.execute(
                 "SELECT attempts, last_error_key, same_error_streak, last_diff_fingerprint, same_diff_streak, branch_name FROM features WHERE id = ?",
                 (feature_id,),
@@ -1876,7 +1963,6 @@ class Database:
                     feature_id,
                 ),
             )
-            conn.commit()
             return cursor.rowcount > 0
 
     def force_retry_feature(self, feature_id: int, *, preserve_branch: bool = True) -> bool:
