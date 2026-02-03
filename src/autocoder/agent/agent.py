@@ -9,16 +9,11 @@ import asyncio
 import sys
 import os
 import re
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
 from claude_agent_sdk import ClaudeSDKClient
-
-try:
-    from zoneinfo import ZoneInfo
-except Exception:  # pragma: no cover - very old Python / missing tzdata
-    ZoneInfo = None  # type: ignore[assignment]
 
 # Fix Windows console encoding for Unicode characters (emoji, etc.)
 # Without this, print() can crash when Claude outputs emoji like ✅
@@ -46,6 +41,7 @@ from .prompts import (
     has_project_prompts,
 )
 from .retry import execute_with_retry, retry_config_from_env
+from .rate_limit import auto_continue_delay_from_rate_limit
 from ..core.database import get_database
 
 
@@ -58,51 +54,6 @@ def _stop_when_done() -> bool:
     if not raw:
         return True
     return raw in {"1", "true", "yes", "on"}
-
-
-def _auto_continue_delay_from_rate_limit(response: str) -> tuple[float, str | None]:
-    """
-    If the Claude CLI indicates a rate limit reset time, return a delay (seconds)
-    until the reset and a human-readable target time string.
-
-    Expected pattern (Claude CLI):
-      "Limit reached ... Resets 5:30pm (America/Los_Angeles)"
-    """
-    if not response:
-        return float(AUTO_CONTINUE_DELAY_SECONDS), None
-    if "limit reached" not in response.lower():
-        return float(AUTO_CONTINUE_DELAY_SECONDS), None
-    if ZoneInfo is None:
-        return float(AUTO_CONTINUE_DELAY_SECONDS), None
-
-    match = re.search(
-        r"(?i)\bresets(?:\s+at)?\s+(\d+)(?::(\d+))?\s*(am|pm)\s*\(([^)]+)\)",
-        response,
-    )
-    if not match:
-        return float(AUTO_CONTINUE_DELAY_SECONDS), None
-
-    hour = int(match.group(1))
-    minute = int(match.group(2)) if match.group(2) else 0
-    period = match.group(3).lower()
-    tz_name = match.group(4).strip()
-
-    if period == "pm" and hour != 12:
-        hour += 12
-    elif period == "am" and hour == 12:
-        hour = 0
-
-    try:
-        tz = ZoneInfo(tz_name)
-        now = datetime.now(tz)
-        target = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
-        if target <= now:
-            target += timedelta(days=1)
-        delay = max(0.0, (target - now).total_seconds())
-        delay = min(delay, 24 * 60 * 60)
-        return delay, target.strftime("%B %d, %Y at %I:%M %p %Z")
-    except Exception:
-        return float(AUTO_CONTINUE_DELAY_SECONDS), None
 
 
 async def run_agent_session(
@@ -476,7 +427,9 @@ async def run_autonomous_agent(
         # Handle status
         if status == "continue":
             limit_reached = bool(response) and "limit reached" in response.lower()
-            delay_s, target = _auto_continue_delay_from_rate_limit(response)
+            delay_s, target = auto_continue_delay_from_rate_limit(
+                response, default_delay_s=float(AUTO_CONTINUE_DELAY_SECONDS)
+            )
             if limit_reached:
                 print("Claude Agent SDK indicated limit reached.", flush=True)
             if target:
