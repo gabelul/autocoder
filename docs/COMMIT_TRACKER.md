@@ -10,10 +10,20 @@ git log --oneline upstream/master..master   # what we have that upstream doesn't
 git log --oneline master..upstream/master   # what upstream has that we don't
 ```
 
+## Last reviewed upstream head
+
+As of **2026-02-03**, this tracker has been reviewed through upstream `b2ab1ec` (upstream/master).
+
 ## Upstream watchlist (leonvanzyl/autocoder)
 
 | Commit | Summary | Status in this fork | Notes / Action |
 | --- | --- | --- | --- |
+| `d8a8c83` | Prevent SQLite corruption in parallel mode with atomic operations | **Ported (adapted)** | Hardened feature claiming/updates with atomic transactions (`BEGIN IMMEDIATE`) + `UPDATE … RETURNING` claim; added concurrency/idempotency tests (`tests/test_db_atomicity.py`). |
+| `c4d0c6c` | Rate limit detection false positives + reset-time cap | **Ported (adapted)** | Centralized parsing in `autocoder.agent.rate_limit` (match “limit reached” anywhere, accept “resets at …”, clamp delay to 24h) + tests that tolerate missing tzdata (`tests/test_rate_limit_parsing.py`). |
+| `e348383` | User-visible error handling for spec creation agent start | **Ported (adapted)** | UI error toast prefers backend-provided `detail.message` when present (`ui/src/lib/api.ts`). |
+| `dc5bcc4` | Move autocoder runtime files into `.autocoder/` subdirectory | **Already have** | This fork already stores runtime artifacts under `<project>/.autocoder/` (logs, gatekeeper artifacts, locks, drafts, etc.). |
+| `24481d4` | Headless browser toggle to settings UI | **Not planned (for now)** | Could be added later if we want a per-project Playwright headless knob; current default is `--isolated` for safety. |
+| `1607fc8` | Multi-feature batching for coding agents | **Skipped** | Adds orchestration complexity; we already scale via multiple agents/parallel workers. |
 | `9039108` | Split UI bundle into smaller chunks | **Ported (adapted)** | Added `manualChunks` split in `ui/vite.config.ts` (Windows-safe path normalization). |
 | `28e8bd6` | Conversation history perf + delete UX + memoized chat messages | **Ported (adapted)** | Ported N+1 fix + cached SQLAlchemy engine/session for assistant DB; added delete error feedback + memoized `ChatMessage` (our component set differs). |
 | `85f6940` | Parallel orchestration + dependency graph UI + agent mission control | **Partially ported** | We’re not adopting upstream’s dependency-graph orchestrator, but we *did* port the Playwright MCP `--isolated` behavior to reduce cross-agent browser conflicts. |
