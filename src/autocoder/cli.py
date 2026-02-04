@@ -154,8 +154,23 @@ def _run_dev_setup(*, repo_root: Path, venv_dir: Path, install: bool, build_ui: 
         else:
             print("\n🎨 Building UI (npm install + build)…")
             try:
-                subprocess.run(["npm", "install"], cwd=str(ui_dir), check=True)
-                subprocess.run(["npm", "run", "build"], cwd=str(ui_dir), check=True)
+                def _cli_argv(name: str) -> list[str]:
+                    """
+                    Build a cross-platform argv prefix for calling a CLI.
+
+                    On Windows, many Node-installed CLIs resolve to `.cmd` shims (not directly
+                    executable by Python's CreateProcess), so we execute via `cmd.exe /c`.
+                    """
+                    if os.name != "nt":
+                        return [name]
+                    resolved = (shutil.which(name) or "").lower()
+                    if resolved.endswith(".exe"):
+                        return [name]
+                    return ["cmd.exe", "/c", name]
+
+                npm = _cli_argv("npm")
+                subprocess.run([*npm, "install"], cwd=str(ui_dir), check=True)
+                subprocess.run([*npm, "run", "build"], cwd=str(ui_dir), check=True)
             except Exception as e:
                 print(f"❌ UI build failed: {e}")
                 return False

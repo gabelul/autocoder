@@ -123,6 +123,20 @@ def start_server(host: str | None = None, port: int | None = None, reload: bool 
         if not is_ui_build_stale(ui_root):
             return
 
+        def _cli_argv(name: str) -> list[str]:
+            """
+            Build a cross-platform argv prefix for calling a CLI.
+
+            On Windows, many Node-installed CLIs resolve to `.cmd` shims (not directly
+            executable by Python's CreateProcess), so we execute via `cmd.exe /c`.
+            """
+            if os.name != "nt":
+                return [name]
+            resolved = (shutil.which(name) or "").lower()
+            if resolved.endswith(".exe"):
+                return [name]
+            return ["cmd.exe", "/c", name]
+
         node_ok = shutil.which("node") is not None
         npm_ok = shutil.which("npm") is not None
         if not (node_ok and npm_ok):
@@ -135,9 +149,10 @@ def start_server(host: str | None = None, port: int | None = None, reload: bool 
         else:
             print("🎨 UI sources changed — rebuilding ui/dist …")
         try:
+            npm = _cli_argv("npm")
             if not (ui_root / "node_modules").exists():
-                subprocess.run(["npm", "install"], cwd=str(ui_root), check=True)
-            subprocess.run(["npm", "run", "build"], cwd=str(ui_root), check=True)
+                subprocess.run([*npm, "install"], cwd=str(ui_root), check=True)
+            subprocess.run([*npm, "run", "build"], cwd=str(ui_root), check=True)
             print("✅ UI rebuild complete.")
         except Exception as exc:
             print(f"⚠️  UI rebuild failed: {exc}")

@@ -90,7 +90,12 @@ class ServerLock:
         if not ok:
             st = self.status()
             pid_info = f" (PID {st.pid})" if st.pid else ""
-            raise RuntimeError(f"UI server already running on port {self.port}{pid_info}")
+            hint = (
+                f"UI server already running on port {self.port}{pid_info}. "
+                f"Stop the existing process (or choose a different port via AUTOCODER_UI_PORT). "
+                f"Lock file: {self.lock_file}"
+            )
+            raise RuntimeError(hint)
         return self
 
     def __exit__(self, exc_type, exc, tb):
